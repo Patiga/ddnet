@@ -53,9 +53,6 @@ public:
   Slice() noexcept;
   Slice(T *, std::size_t count) noexcept;
 
-  template <typename C>
-  explicit Slice(C& c) : Slice(c.data(), c.size()) {}
-
   Slice &operator=(const Slice<T> &) &noexcept = default;
   Slice &operator=(Slice<T> &&) &noexcept = default;
 
@@ -268,8 +265,7 @@ typename Slice<T>::iterator::difference_type
 Slice<T>::iterator::operator-(const iterator &other) const noexcept {
   auto diff = std::distance(static_cast<char *>(other.pos),
                             static_cast<char *>(this->pos));
-  return diff / static_cast<typename Slice<T>::iterator::difference_type>(
-                    this->stride);
+  return diff / this->stride;
 }
 
 template <typename T>
@@ -435,9 +431,9 @@ static_assert(
     "type StrRef should be trivially move constructible and trivially destructible in C++ to be used as a slice element in &[StrRef] in Rust");
 
 extern "C" {
-void cxxbridge1$BackendWgpuGreetings(::rust::Slice<::StrRef const> names) noexcept;
+void cxxbridge1$BackendWgpuGreetings(::rust::Slice<const ::StrRef> names) noexcept;
 } // extern "C"
 
-void BackendWgpuGreetings(::rust::Slice<::StrRef const> names) noexcept {
+void BackendWgpuGreetings(::rust::Slice<const ::StrRef> names) noexcept {
   cxxbridge1$BackendWgpuGreetings(names);
 }

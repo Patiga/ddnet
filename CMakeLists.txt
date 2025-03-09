@@ -2343,6 +2343,8 @@ if(CLIENT)
     backend/opengles/opengles_sl_program.cpp
     backend/vulkan/backend_vulkan.cpp
     backend/vulkan/backend_vulkan.h
+    backend/wgpu/backend_wgpu.cpp
+    backend/wgpu/backend_wgpu.h
     backend_sdl.cpp
     backend_sdl.h
     blocklist_driver.cpp

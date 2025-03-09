@@ -41,6 +41,7 @@
 #include "backend/vulkan/backend_vulkan.h"
 #endif
 
+#include "backend/wgpu/backend_wgpu.h"
 #include "graphics_threaded.h"
 
 #include <engine/graphics.h>
@@ -463,6 +464,10 @@ CCommandProcessor_SDL_GL::CCommandProcessor_SDL_GL(EBackendType BackendType, int
 		m_pGLBackend = CreateVulkanCommandProcessorFragment();
 #endif
 	}
+	else if(BackendType == BACKEND_TYPE_WGPU)
+	{
+		m_pGLBackend = CreateWGPUCommandProcessorFragment();
+	}
 #endif
 }
 
@@ -766,6 +771,8 @@ EBackendType CGraphicsBackend_SDL_GL::DetectBackend()
 		RetBackendType = BACKEND_TYPE_VULKAN;
 	else if(pEnvDriver && str_comp_nocase(pEnvDriver, "OpenGL") == 0)
 		RetBackendType = BACKEND_TYPE_OPENGL;
+	else if(pEnvDriver && str_comp_nocase(pEnvDriver, "WGPU") == 0)
+		RetBackendType = BACKEND_TYPE_WGPU;
 	else if(pEnvDriver == nullptr)
 	{
 		// load the config backend
@@ -776,6 +783,8 @@ EBackendType CGraphicsBackend_SDL_GL::DetectBackend()
 			RetBackendType = BACKEND_TYPE_VULKAN;
 		else if(str_comp_nocase(pConfBackend, "OpenGL") == 0)
 			RetBackendType = BACKEND_TYPE_OPENGL;
+		else if(str_comp_nocase(pConfBackend, "WGPU") == 0)
+			RetBackendType = BACKEND_TYPE_WGPU;
 	}
 #else
 	RetBackendType = BACKEND_TYPE_OPENGL;
@@ -842,6 +851,12 @@ void CGraphicsBackend_SDL_GL::ClampDriverVersion(EBackendType BackendType)
 		g_Config.m_GfxGLMinor = BACKEND_VULKAN_VERSION_MINOR;
 		g_Config.m_GfxGLPatch = 0;
 #endif
+	}
+	else if(BackendType == BACKEND_TYPE_WGPU)
+	{
+		g_Config.m_GfxGLMajor = 24;
+		g_Config.m_GfxGLMinor = 1;
+		g_Config.m_GfxGLPatch = 0;
 	}
 }
 
@@ -1004,6 +1019,16 @@ bool CGraphicsBackend_SDL_GL::GetDriverVersion(EGraphicsDriverAgeType DriverAgeT
 #else
 		return false;
 #endif
+	}
+	else if(BackendType == BACKEND_TYPE_WGPU)
+	{
+		pName = "WGPU";
+		{
+			Major = 24;
+			Minor = 1;
+			Patch = 0;
+			return true;
+		}
 	}
 	return false;
 }
@@ -1215,6 +1240,9 @@ int CGraphicsBackend_SDL_GL::Init(const char *pName, int *pScreen, int *pWidth, 
 		break;
 	case BACKEND_TYPE_VULKAN:
 		pBackendName = "Vulkan";
+		break;
+	case BACKEND_TYPE_WGPU:
+		pBackendName = "WGPU";
 		break;
 	default:
 		dbg_assert_failed("Invalid m_BackendType: %d", m_BackendType);

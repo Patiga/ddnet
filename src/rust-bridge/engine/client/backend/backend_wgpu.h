@@ -54,9 +54,6 @@ public:
   Slice() noexcept;
   Slice(T *, std::size_t count) noexcept;
 
-  template <typename C>
-  explicit Slice(C& c) : Slice(c.data(), c.size()) {}
-
   Slice &operator=(const Slice<T> &) &noexcept = default;
   Slice &operator=(Slice<T> &&) &noexcept = default;
 
@@ -269,8 +266,7 @@ typename Slice<T>::iterator::difference_type
 Slice<T>::iterator::operator-(const iterator &other) const noexcept {
   auto diff = std::distance(static_cast<char *>(other.pos),
                             static_cast<char *>(this->pos));
-  return diff / static_cast<typename Slice<T>::iterator::difference_type>(
-                    this->stride);
+  return diff / this->stride;
 }
 
 template <typename T>
@@ -394,4 +390,4 @@ std::size_t align_of() {
 } // namespace cxxbridge1
 } // namespace rust
 
-void BackendWgpuGreetings(::rust::Slice<::StrRef const> names) noexcept;
+void BackendWgpuGreetings(::rust::Slice<const ::StrRef> names) noexcept;
