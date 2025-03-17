@@ -23,6 +23,8 @@
 
 #include "backend_sdl.h"
 
+#include <engine/client/backend/backend_wgpu.h>
+
 #if defined(CONF_HEADLESS_CLIENT)
 #include "backend/null/backend_null.h"
 #endif
@@ -412,6 +414,11 @@ void CCommandProcessor_SDL_GL::RunBuffer(CCommandBuffer *pBuffer)
 CCommandProcessor_SDL_GL::CCommandProcessor_SDL_GL(EBackendType BackendType, int GLMajor, int GLMinor, int GLPatch)
 {
 	m_BackendType = BackendType;
+
+	const char *const apNames[] = {
+		"DDNet",
+	};
+	BackendWgpuGreetings(rust::Slice(apNames, sizeof(apNames) / sizeof(apNames[0])));
 
 #if defined(CONF_HEADLESS_CLIENT)
 	m_pGLBackend = new CCommandProcessorFragment_Null();

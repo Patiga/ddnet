@@ -56,6 +56,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ddnet-engine-client"
+version = "0.0.1"
+dependencies = [
+ "cxx",
+ "ddnet-base",
+ "ddnet-engine",
+ "ddnet-test",
+]
+
+[[package]]
 name = "ddnet-engine-shared"
 version = "0.0.1"
 dependencies = [

@@ -847,6 +847,13 @@ set_glob(RUST_BASE GLOB_RECURSE "rs;toml" src/base
   rust.rs
 )
 
+set_glob(RUST_ENGINE_CLIENT GLOB_RECURSE "rs;toml" src/engine/client
+  Cargo.toml
+  backend/mod.rs
+  backend/wgpu/mod.rs
+  lib.rs
+)
+
 set_glob(RUST_ENGINE_INTERFACE GLOB "rs;toml" src/engine
   Cargo.toml
   console.rs
@@ -861,11 +868,19 @@ set_glob(RUST_ENGINE_SHARED GLOB_RECURSE "rs;toml" src/engine/shared
   rust_version.rs
 )
 
-set_src(RUST_BRIDGE_SHARED GLOB_RECURSE src/rust-bridge
-  cpp/console.cpp
-  cpp/console.h
-  engine/shared/rust_version.cpp
-  engine/shared/rust_version.h
+set_src(RUST_BRIDGE_CPP_SHARED GLOB_RECURSE src/rust-bridge/cpp
+  console.cpp
+  console.h
+)
+
+set_src(RUST_BRIDGE_ENGINE_CLIENT GLOB_RECURSE src/rust-bridge/engine/client
+  backend/backend_wgpu.cpp
+  backend/backend_wgpu.h
+)
+
+set_src(RUST_BRIDGE_ENGINE_SHARED GLOB_RECURSE src/rust-bridge/engine/shared
+  rust_version.cpp
+  rust_version.h
 )
 
 set_glob(RUST_MASTERSRV GLOB "rs;toml" src/mastersrv/src
@@ -876,7 +891,10 @@ set_glob(RUST_MASTERSRV GLOB "rs;toml" src/mastersrv/src
   main.rs
 )
 
-add_library(rust-bridge-shared EXCLUDE_FROM_ALL OBJECT ${RUST_BRIDGE_SHARED})
+add_library(rust-bridge-client EXCLUDE_FROM_ALL OBJECT ${RUST_BRIDGE_ENGINE_CLIENT})
+list(APPEND TARGETS_OWN rust-bridge-client)
+
+add_library(rust-bridge-shared EXCLUDE_FROM_ALL OBJECT ${RUST_BRIDGE_CPP_SHARED} ${RUST_BRIDGE_ENGINE_SHARED})
 list(APPEND TARGETS_OWN rust-bridge-shared)
 
 if(TARGET_OS STREQUAL "android")
@@ -940,12 +958,13 @@ endif()
 
 set(RUST_SRC
       ${RUST_BASE}
+      ${RUST_ENGINE_CLIENT}
       ${RUST_ENGINE_INTERFACE}
       ${RUST_ENGINE_SHARED}
       Cargo.toml
       Cargo.lock
 )
-set(RUST_TARGETS engine_shared)
+set(RUST_TARGETS engine_client engine_shared)
 if(NOT CMAKE_OSX_ARCHITECTURES)
   set(RUST_OUTPUTS)
   foreach(rust_target ${RUST_TARGETS})
@@ -2647,6 +2666,7 @@ if(CLIENT)
     ${VULKAN_LIBRARIES}
 
     ${TARGET_STEAMAPI}
+    rust_engine_client
     rust_engine_shared
 
     ${PLATFORM_CLIENT_LIBS}
@@ -2691,6 +2711,7 @@ if(CLIENT)
       $<TARGET_OBJECTS:engine-gfx>
       $<TARGET_OBJECTS:engine-shared>
       $<TARGET_OBJECTS:game-shared>
+      $<TARGET_OBJECTS:rust-bridge-client>
       $<TARGET_OBJECTS:rust-bridge-shared>
     )
   else()
@@ -2703,6 +2724,7 @@ if(CLIENT)
       $<TARGET_OBJECTS:engine-gfx>
       $<TARGET_OBJECTS:engine-shared>
       $<TARGET_OBJECTS:game-shared>
+      $<TARGET_OBJECTS:rust-bridge-client>
       $<TARGET_OBJECTS:rust-bridge-shared>
     )
   endif()
