@@ -1,23 +1,24 @@
 #include "backend_wgpu.h"
 
+#include "base/system.h"
+
 #include <engine/client/backend_sdl.h>
+
+CCommandProcessorFragment_GLBase *CreateWGPUCommandProcessorFragment()
+{
+	return new CCommandProcessorFragment_WGPU();
+}
 
 ERunCommandReturnTypes CCommandProcessorFragment_WGPU::RunCommand(const CCommandBuffer::SCommand *pBaseCommand)
 {
 	switch(pBaseCommand->m_Cmd)
 	{
-	case CCommandProcessorFragment_WGPU::CMD_INIT:
-		Cmd_Init(static_cast<const SCommand_Init *>(pBaseCommand));
-		break;
-	case CCommandBuffer::CMD_TEXTURE_CREATE:
-		Cmd_Texture_Create(static_cast<const CCommandBuffer::SCommand_Texture_Create *>(pBaseCommand));
-		break;
-	case CCommandBuffer::CMD_TEXT_TEXTURES_CREATE:
-		Cmd_TextTextures_Create(static_cast<const CCommandBuffer::SCommand_TextTextures_Create *>(pBaseCommand));
-		break;
-	case CCommandBuffer::CMD_TEXT_TEXTURE_UPDATE:
-		Cmd_TextTexture_Update(static_cast<const CCommandBuffer::SCommand_TextTexture_Update *>(pBaseCommand));
-		break;
+	case CCommandProcessorFragment_WGPU::CMD_INIT: Cmd_Init(static_cast<const SCommand_Init *>(pBaseCommand)); break;
+	case CCommandBuffer::CMD_TEXTURE_CREATE: Cmd_Texture_Create(static_cast<const CCommandBuffer::SCommand_Texture_Create *>(pBaseCommand)); break;
+	case CCommandBuffer::CMD_TEXTURE_DESTROY: Cmd_Texture_Destroy(static_cast<const CCommandBuffer::SCommand_Texture_Destroy *>(pBaseCommand)); break;
+	case CCommandBuffer::CMD_TEXT_TEXTURES_CREATE: Cmd_TextTextures_Create(static_cast<const CCommandBuffer::SCommand_TextTextures_Create *>(pBaseCommand)); break;
+	case CCommandBuffer::CMD_TEXT_TEXTURES_DESTROY: Cmd_TextTextures_Destroy(static_cast<const CCommandBuffer::SCommand_TextTextures_Destroy *>(pBaseCommand)); break;
+	case CCommandBuffer::CMD_TEXT_TEXTURE_UPDATE: Cmd_TextTexture_Update(static_cast<const CCommandBuffer::SCommand_TextTexture_Update *>(pBaseCommand)); break;
 	}
 	return ERunCommandReturnTypes::RUN_COMMAND_COMMAND_HANDLED;
 }
@@ -46,21 +47,64 @@ bool CCommandProcessorFragment_WGPU::Cmd_Init(const SCommand_Init *pCommand)
 
 void CCommandProcessorFragment_WGPU::Cmd_Texture_Create(const CCommandBuffer::SCommand_Texture_Create *pCommand)
 {
+	dbg_assert(pCommand->m_Width > 0, "Texture width <= 0");
+	dbg_assert(pCommand->m_Height > 0, "Texture height <= 0");
+	m_Rust->create_texture(
+		pCommand->m_Slot,
+		4, // RGBA
+		pCommand->m_Flags,
+		(uint32_t)pCommand->m_Width,
+		(uint32_t)pCommand->m_Height,
+		rust::Slice<const uint8_t>(pCommand->m_pData, pCommand->m_Width * pCommand->m_Height * 4));
 	free(pCommand->m_pData);
+}
+
+void CCommandProcessorFragment_WGPU::Cmd_Texture_Destroy(const CCommandBuffer::SCommand_Texture_Destroy *pCommand)
+{
+	m_Rust->destroy_texture(pCommand->m_Slot);
 }
 
 void CCommandProcessorFragment_WGPU::Cmd_TextTextures_Create(const CCommandBuffer::SCommand_TextTextures_Create *pCommand)
 {
+	printf("Text created\n");
+	dbg_assert(pCommand->m_Width > 0, "Texture width <= 0");
+	dbg_assert(pCommand->m_Height > 0, "Texture height <= 0");
+	m_Rust->create_texture(
+		pCommand->m_Slot,
+		1, // R (single channel)
+		TextureFlag::NO_MIPMAPS,
+		(uint32_t)pCommand->m_Width,
+		(uint32_t)pCommand->m_Height,
+		rust::Slice<const uint8_t>(pCommand->m_pTextData, pCommand->m_Width * pCommand->m_Height));
+	m_Rust->create_texture(
+		pCommand->m_SlotOutline,
+		1,
+		TextureFlag::NO_MIPMAPS,
+		(uint32_t)pCommand->m_Width,
+		(uint32_t)pCommand->m_Height,
+		rust::Slice<const uint8_t>(pCommand->m_pTextOutlineData, pCommand->m_Width * pCommand->m_Height));
 	free(pCommand->m_pTextData);
 	free(pCommand->m_pTextOutlineData);
 }
 
-void CCommandProcessorFragment_WGPU::Cmd_TextTexture_Update(const CCommandBuffer::SCommand_TextTexture_Update *pCommand)
+void CCommandProcessorFragment_WGPU::Cmd_TextTextures_Destroy(const CCommandBuffer::SCommand_TextTextures_Destroy *pCommand)
 {
-	free(pCommand->m_pData);
+	m_Rust->destroy_texture(pCommand->m_Slot);
+	m_Rust->destroy_texture(pCommand->m_SlotOutline);
 }
 
-CCommandProcessorFragment_GLBase *CreateWGPUCommandProcessorFragment()
+void CCommandProcessorFragment_WGPU::Cmd_TextTexture_Update(const CCommandBuffer::SCommand_TextTexture_Update *pCommand)
 {
-	return new CCommandProcessorFragment_WGPU();
+	dbg_assert(pCommand->m_Width > 0, "Texture update width <= 0");
+	dbg_assert(pCommand->m_Height > 0, "Texture update height <= 0");
+	dbg_assert(pCommand->m_X >= 0, "Texture update x < 0");
+	dbg_assert(pCommand->m_Y >= 0, "Texture update y < 0");
+	m_Rust->update_texture(
+		pCommand->m_Slot,
+		(uint32_t)pCommand->m_X,
+		(uint32_t)pCommand->m_Y,
+		(uint32_t)pCommand->m_Width,
+		(uint32_t)pCommand->m_Height,
+		rust::Slice<const uint8_t>(pCommand->m_pData, pCommand->m_Width * pCommand->m_Height));
+	free(pCommand->m_pData);
 }
