@@ -5,8 +5,13 @@
 #include <cstddef>
 #include <cstdint>
 #include <iterator>
+#include <new>
 #include <stdexcept>
 #include <type_traits>
+#include <utility>
+#if __cplusplus >= 202002L
+#include <ranges>
+#endif
 
 namespace rust {
 inline namespace cxxbridge1 {
@@ -23,8 +28,6 @@ template <typename T>
 class impl;
 } // namespace
 
-class Opaque;
-
 template <typename T>
 ::std::size_t size_of();
 template <typename T>
@@ -40,8 +43,8 @@ template <>
 struct copy_assignable_if<false> {
   copy_assignable_if() noexcept = default;
   copy_assignable_if(const copy_assignable_if &) noexcept = default;
-  copy_assignable_if &operator=(const copy_assignable_if &) &noexcept = delete;
-  copy_assignable_if &operator=(copy_assignable_if &&) &noexcept = default;
+  copy_assignable_if &operator=(const copy_assignable_if &) & noexcept = delete;
+  copy_assignable_if &operator=(copy_assignable_if &&) & noexcept = default;
 };
 } // namespace detail
 
@@ -55,10 +58,10 @@ public:
   Slice(T *, std::size_t count) noexcept;
 
   template <typename C>
-  explicit Slice(C& c) : Slice(c.data(), c.size()) {}
+  explicit Slice(C &c) : Slice(c.data(), c.size()) {}
 
-  Slice &operator=(const Slice<T> &) &noexcept = default;
-  Slice &operator=(Slice<T> &&) &noexcept = default;
+  Slice &operator=(const Slice<T> &) & noexcept = default;
+  Slice &operator=(Slice<T> &&) & noexcept = default;
 
   T *data() const noexcept;
   std::size_t size() const noexcept;
@@ -90,10 +93,20 @@ private:
   std::array<std::uintptr_t, 2> repr;
 };
 
+#ifdef __cpp_deduction_guides
+template <typename C>
+explicit Slice(C &c)
+    -> Slice<std::remove_reference_t<decltype(*std::declval<C>().data())>>;
+#endif // __cpp_deduction_guides
+
 template <typename T>
 class Slice<T>::iterator final {
 public:
+#if __cplusplus >= 202002L
+  using iterator_category = std::contiguous_iterator_tag;
+#else
   using iterator_category = std::random_access_iterator_tag;
+#endif
   using value_type = T;
   using difference_type = std::ptrdiff_t;
   using pointer = typename std::add_pointer<T>::type;
@@ -111,6 +124,9 @@ public:
   iterator &operator+=(difference_type) noexcept;
   iterator &operator-=(difference_type) noexcept;
   iterator operator+(difference_type) const noexcept;
+  friend inline iterator operator+(difference_type lhs, iterator rhs) noexcept {
+    return rhs + lhs;
+  }
   iterator operator-(difference_type) const noexcept;
   difference_type operator-(const iterator &) const noexcept;
 
@@ -126,6 +142,11 @@ private:
   void *pos;
   std::size_t stride;
 };
+
+#if __cplusplus >= 202002L
+static_assert(std::ranges::contiguous_range<rust::Slice<const uint8_t>>);
+static_assert(std::contiguous_iterator<rust::Slice<const uint8_t>::iterator>);
+#endif
 
 template <typename T>
 Slice<T>::Slice() noexcept {
@@ -324,6 +345,172 @@ void Slice<T>::swap(Slice &rhs) noexcept {
 }
 #endif // CXXBRIDGE1_RUST_SLICE
 
+#ifndef CXXBRIDGE1_RUST_BOX
+#define CXXBRIDGE1_RUST_BOX
+template <typename T>
+class Box final {
+public:
+  using element_type = T;
+  using const_pointer =
+      typename std::add_pointer<typename std::add_const<T>::type>::type;
+  using pointer = typename std::add_pointer<T>::type;
+
+  Box() = delete;
+  Box(Box &&) noexcept;
+  ~Box() noexcept;
+
+  explicit Box(const T &);
+  explicit Box(T &&);
+
+  Box &operator=(Box &&) & noexcept;
+
+  const T *operator->() const noexcept;
+  const T &operator*() const noexcept;
+  T *operator->() noexcept;
+  T &operator*() noexcept;
+
+  template <typename... Fields>
+  static Box in_place(Fields &&...);
+
+  void swap(Box &) noexcept;
+
+  static Box from_raw(T *) noexcept;
+
+  T *into_raw() noexcept;
+
+  /* Deprecated */ using value_type = element_type;
+
+private:
+  class uninit;
+  class allocation;
+  Box(uninit) noexcept;
+  void drop() noexcept;
+
+  friend void swap(Box &lhs, Box &rhs) noexcept { lhs.swap(rhs); }
+
+  T *ptr;
+};
+
+template <typename T>
+class Box<T>::uninit {};
+
+template <typename T>
+class Box<T>::allocation {
+  static T *alloc() noexcept;
+  static void dealloc(T *) noexcept;
+
+public:
+  allocation() noexcept : ptr(alloc()) {}
+  ~allocation() noexcept {
+    if (this->ptr) {
+      dealloc(this->ptr);
+    }
+  }
+  T *ptr;
+};
+
+template <typename T>
+Box<T>::Box(Box &&other) noexcept : ptr(other.ptr) {
+  other.ptr = nullptr;
+}
+
+template <typename T>
+Box<T>::Box(const T &val) {
+  allocation alloc;
+  ::new (alloc.ptr) T(val);
+  this->ptr = alloc.ptr;
+  alloc.ptr = nullptr;
+}
+
+template <typename T>
+Box<T>::Box(T &&val) {
+  allocation alloc;
+  ::new (alloc.ptr) T(std::move(val));
+  this->ptr = alloc.ptr;
+  alloc.ptr = nullptr;
+}
+
+template <typename T>
+Box<T>::~Box() noexcept {
+  if (this->ptr) {
+    this->drop();
+  }
+}
+
+template <typename T>
+Box<T> &Box<T>::operator=(Box &&other) & noexcept {
+  if (this->ptr) {
+    this->drop();
+  }
+  this->ptr = other.ptr;
+  other.ptr = nullptr;
+  return *this;
+}
+
+template <typename T>
+const T *Box<T>::operator->() const noexcept {
+  return this->ptr;
+}
+
+template <typename T>
+const T &Box<T>::operator*() const noexcept {
+  return *this->ptr;
+}
+
+template <typename T>
+T *Box<T>::operator->() noexcept {
+  return this->ptr;
+}
+
+template <typename T>
+T &Box<T>::operator*() noexcept {
+  return *this->ptr;
+}
+
+template <typename T>
+template <typename... Fields>
+Box<T> Box<T>::in_place(Fields &&...fields) {
+  allocation alloc;
+  auto ptr = alloc.ptr;
+  ::new (ptr) T{std::forward<Fields>(fields)...};
+  alloc.ptr = nullptr;
+  return from_raw(ptr);
+}
+
+template <typename T>
+void Box<T>::swap(Box &rhs) noexcept {
+  using std::swap;
+  swap(this->ptr, rhs.ptr);
+}
+
+template <typename T>
+Box<T> Box<T>::from_raw(T *raw) noexcept {
+  Box box = uninit{};
+  box.ptr = raw;
+  return box;
+}
+
+template <typename T>
+T *Box<T>::into_raw() noexcept {
+  T *raw = this->ptr;
+  this->ptr = nullptr;
+  return raw;
+}
+
+template <typename T>
+Box<T>::Box(uninit) noexcept {}
+#endif // CXXBRIDGE1_RUST_BOX
+
+#ifndef CXXBRIDGE1_RUST_OPAQUE
+#define CXXBRIDGE1_RUST_OPAQUE
+class Opaque {
+public:
+  Opaque() = delete;
+  Opaque(const Opaque &) = delete;
+  ~Opaque() = delete;
+};
+#endif // CXXBRIDGE1_RUST_OPAQUE
+
 #ifndef CXXBRIDGE1_IS_COMPLETE
 #define CXXBRIDGE1_IS_COMPLETE
 namespace detail {
@@ -394,4 +581,25 @@ std::size_t align_of() {
 } // namespace cxxbridge1
 } // namespace rust
 
+struct RustWgpuBackend;
+
+#ifndef CXXBRIDGE1_STRUCT_RustWgpuBackend
+#define CXXBRIDGE1_STRUCT_RustWgpuBackend
+struct RustWgpuBackend final : public ::rust::Opaque {
+  void create_texture(::std::int32_t slot, ::std::uint32_t bytes_per_pixel, ::std::int32_t flags, ::std::uint32_t width, ::std::uint32_t height, ::rust::Slice<::std::uint8_t const> data) noexcept;
+  void update_texture(::std::int32_t slot, ::std::uint32_t x, ::std::uint32_t y, ::std::uint32_t width, ::std::uint32_t height, ::rust::Slice<::std::uint8_t const> data) noexcept;
+  void destroy_texture(::std::int32_t slot) noexcept;
+  ~RustWgpuBackend() = delete;
+
+private:
+  friend ::rust::layout;
+  struct layout {
+    static ::std::size_t size() noexcept;
+    static ::std::size_t align() noexcept;
+  };
+};
+#endif // CXXBRIDGE1_STRUCT_RustWgpuBackend
+
 void BackendWgpuGreetings(::rust::Slice<::StrRef const> names) noexcept;
+
+::rust::Box<::RustWgpuBackend> init_rust_wgpu_backend() noexcept;
