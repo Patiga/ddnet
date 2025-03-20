@@ -851,6 +851,7 @@ set_glob(RUST_ENGINE_CLIENT GLOB_RECURSE "rs;toml" src/engine/client
   Cargo.toml
   backend/mod.rs
   backend/wgpu/mod.rs
+  backend/wgpu/window_handle.rs
   lib.rs
 )
 

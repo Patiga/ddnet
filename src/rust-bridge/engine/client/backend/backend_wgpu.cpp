@@ -597,9 +597,11 @@ struct RustWgpuBackend;
 #ifndef CXXBRIDGE1_STRUCT_RustWgpuBackend
 #define CXXBRIDGE1_STRUCT_RustWgpuBackend
 struct RustWgpuBackend final : public ::rust::Opaque {
+  void init_window(::std::uint8_t *window, ::std::uint32_t width, ::std::uint32_t height) noexcept;
   void create_texture(::std::int32_t slot, ::std::uint32_t bytes_per_pixel, ::std::int32_t flags, ::std::uint32_t width, ::std::uint32_t height, ::rust::Slice<const ::std::uint8_t> data) noexcept;
   void update_texture(::std::int32_t slot, ::std::uint32_t x, ::std::uint32_t y, ::std::uint32_t width, ::std::uint32_t height, ::rust::Slice<const ::std::uint8_t> data) noexcept;
   void destroy_texture(::std::int32_t slot) noexcept;
+  void clear(double r, double g, double b, double a) noexcept;
   ~RustWgpuBackend() = delete;
 
 private:
@@ -622,11 +624,15 @@ void cxxbridge1$BackendWgpuGreetings(::rust::Slice<const ::StrRef> names) noexce
 
 ::RustWgpuBackend *cxxbridge1$init_rust_wgpu_backend() noexcept;
 
+void cxxbridge1$RustWgpuBackend$init_window(::RustWgpuBackend &self, ::std::uint8_t *window, ::std::uint32_t width, ::std::uint32_t height) noexcept;
+
 void cxxbridge1$RustWgpuBackend$create_texture(::RustWgpuBackend &self, ::std::int32_t slot, ::std::uint32_t bytes_per_pixel, ::std::int32_t flags, ::std::uint32_t width, ::std::uint32_t height, ::rust::Slice<const ::std::uint8_t> data) noexcept;
 
 void cxxbridge1$RustWgpuBackend$update_texture(::RustWgpuBackend &self, ::std::int32_t slot, ::std::uint32_t x, ::std::uint32_t y, ::std::uint32_t width, ::std::uint32_t height, ::rust::Slice<const ::std::uint8_t> data) noexcept;
 
 void cxxbridge1$RustWgpuBackend$destroy_texture(::RustWgpuBackend &self, ::std::int32_t slot) noexcept;
+
+void cxxbridge1$RustWgpuBackend$clear(::RustWgpuBackend &self, double r, double g, double b, double a) noexcept;
 } // extern "C"
 
 void BackendWgpuGreetings(::rust::Slice<const ::StrRef> names) noexcept {
@@ -645,6 +651,10 @@ void BackendWgpuGreetings(::rust::Slice<const ::StrRef> names) noexcept {
   return ::rust::Box<::RustWgpuBackend>::from_raw(cxxbridge1$init_rust_wgpu_backend());
 }
 
+void RustWgpuBackend::init_window(::std::uint8_t *window, ::std::uint32_t width, ::std::uint32_t height) noexcept {
+  cxxbridge1$RustWgpuBackend$init_window(*this, window, width, height);
+}
+
 void RustWgpuBackend::create_texture(::std::int32_t slot, ::std::uint32_t bytes_per_pixel, ::std::int32_t flags, ::std::uint32_t width, ::std::uint32_t height, ::rust::Slice<const ::std::uint8_t> data) noexcept {
   cxxbridge1$RustWgpuBackend$create_texture(*this, slot, bytes_per_pixel, flags, width, height, data);
 }
@@ -655,6 +665,10 @@ void RustWgpuBackend::update_texture(::std::int32_t slot, ::std::uint32_t x, ::s
 
 void RustWgpuBackend::destroy_texture(::std::int32_t slot) noexcept {
   cxxbridge1$RustWgpuBackend$destroy_texture(*this, slot);
+}
+
+void RustWgpuBackend::clear(double r, double g, double b, double a) noexcept {
+  cxxbridge1$RustWgpuBackend$clear(*this, r, g, b, a);
 }
 
 extern "C" {

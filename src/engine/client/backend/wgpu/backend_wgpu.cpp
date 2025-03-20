@@ -4,6 +4,8 @@
 
 #include <engine/client/backend_sdl.h>
 
+#include <SDL_syswm.h>
+
 CCommandProcessorFragment_GLBase *CreateWGPUCommandProcessorFragment()
 {
 	return new CCommandProcessorFragment_WGPU();
@@ -13,14 +15,30 @@ ERunCommandReturnTypes CCommandProcessorFragment_WGPU::RunCommand(const CCommand
 {
 	switch(pBaseCommand->m_Cmd)
 	{
+	case CCommandProcessorFragment_WGPU::CMD_PRE_INIT: Cmd_PreInit(static_cast<const SCommand_PreInit *>(pBaseCommand)); break;
 	case CCommandProcessorFragment_WGPU::CMD_INIT: Cmd_Init(static_cast<const SCommand_Init *>(pBaseCommand)); break;
 	case CCommandBuffer::CMD_TEXTURE_CREATE: Cmd_Texture_Create(static_cast<const CCommandBuffer::SCommand_Texture_Create *>(pBaseCommand)); break;
 	case CCommandBuffer::CMD_TEXTURE_DESTROY: Cmd_Texture_Destroy(static_cast<const CCommandBuffer::SCommand_Texture_Destroy *>(pBaseCommand)); break;
 	case CCommandBuffer::CMD_TEXT_TEXTURES_CREATE: Cmd_TextTextures_Create(static_cast<const CCommandBuffer::SCommand_TextTextures_Create *>(pBaseCommand)); break;
 	case CCommandBuffer::CMD_TEXT_TEXTURES_DESTROY: Cmd_TextTextures_Destroy(static_cast<const CCommandBuffer::SCommand_TextTextures_Destroy *>(pBaseCommand)); break;
 	case CCommandBuffer::CMD_TEXT_TEXTURE_UPDATE: Cmd_TextTexture_Update(static_cast<const CCommandBuffer::SCommand_TextTexture_Update *>(pBaseCommand)); break;
+	case CCommandBuffer::CMD_CLEAR: Cmd_Clear(static_cast<const CCommandBuffer::SCommand_Clear *>(pBaseCommand)); break;
+	case CCommandBuffer::CMD_RENDER: Cmd_Render(static_cast<const CCommandBuffer::SCommand_Render *>(pBaseCommand)); break;
 	}
 	return ERunCommandReturnTypes::RUN_COMMAND_COMMAND_HANDLED;
+}
+
+bool CCommandProcessorFragment_WGPU::Cmd_PreInit(const SCommand_PreInit *pCommand)
+{
+	SDL_SysWMinfo WindowInfo;
+	SDL_GetVersion(&WindowInfo.version);
+	if(SDL_GetWindowWMInfo(pCommand->m_pWindow, &WindowInfo) == 0)
+	{
+		dbg_msg("wgpu", "error from sdl: %s", SDL_GetError());
+		return false;
+	}
+	m_Rust->init_window((uint8_t *)&WindowInfo, pCommand->m_Width, pCommand->m_Height);
+	return true;
 }
 
 bool CCommandProcessorFragment_WGPU::Cmd_Init(const SCommand_Init *pCommand)
@@ -42,7 +60,7 @@ bool CCommandProcessorFragment_WGPU::Cmd_Init(const SCommand_Init *pCommand)
 	pCommand->m_pCapabilities->m_ContextMajor = 0;
 	pCommand->m_pCapabilities->m_ContextMinor = 0;
 	pCommand->m_pCapabilities->m_ContextPatch = 0;
-	return false;
+	return true;
 }
 
 void CCommandProcessorFragment_WGPU::Cmd_Texture_Create(const CCommandBuffer::SCommand_Texture_Create *pCommand)
@@ -66,7 +84,6 @@ void CCommandProcessorFragment_WGPU::Cmd_Texture_Destroy(const CCommandBuffer::S
 
 void CCommandProcessorFragment_WGPU::Cmd_TextTextures_Create(const CCommandBuffer::SCommand_TextTextures_Create *pCommand)
 {
-	printf("Text created\n");
 	dbg_assert(pCommand->m_Width > 0, "Texture width <= 0");
 	dbg_assert(pCommand->m_Height > 0, "Texture height <= 0");
 	m_Rust->create_texture(
@@ -107,4 +124,17 @@ void CCommandProcessorFragment_WGPU::Cmd_TextTexture_Update(const CCommandBuffer
 		(uint32_t)pCommand->m_Height,
 		rust::Slice<const uint8_t>(pCommand->m_pData, pCommand->m_Width * pCommand->m_Height));
 	free(pCommand->m_pData);
+}
+
+void CCommandProcessorFragment_WGPU::Cmd_Clear(const CCommandBuffer::SCommand_Clear *pCommand)
+{
+	m_Rust->clear(
+		pCommand->m_Color.r,
+		pCommand->m_Color.g,
+		pCommand->m_Color.b,
+		pCommand->m_Color.a);
+}
+
+void CCommandProcessorFragment_WGPU::Cmd_Render(const CCommandBuffer::SCommand_Render *pCommand)
+{
 }

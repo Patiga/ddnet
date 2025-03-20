@@ -561,9 +561,11 @@ struct RustWgpuBackend;
 #ifndef CXXBRIDGE1_STRUCT_RustWgpuBackend
 #define CXXBRIDGE1_STRUCT_RustWgpuBackend
 struct RustWgpuBackend final : public ::rust::Opaque {
+  void init_window(::std::uint8_t *window, ::std::uint32_t width, ::std::uint32_t height) noexcept;
   void create_texture(::std::int32_t slot, ::std::uint32_t bytes_per_pixel, ::std::int32_t flags, ::std::uint32_t width, ::std::uint32_t height, ::rust::Slice<const ::std::uint8_t> data) noexcept;
   void update_texture(::std::int32_t slot, ::std::uint32_t x, ::std::uint32_t y, ::std::uint32_t width, ::std::uint32_t height, ::rust::Slice<const ::std::uint8_t> data) noexcept;
   void destroy_texture(::std::int32_t slot) noexcept;
+  void clear(double r, double g, double b, double a) noexcept;
   ~RustWgpuBackend() = delete;
 
 private:
