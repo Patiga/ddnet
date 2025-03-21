@@ -202,7 +202,7 @@ impl HasWindowHandle for SDL_SysWMinfo {
 
 impl HasDisplayHandle for SDL_SysWMinfo {
     #[doc(alias = "SDL_GetVersion")]
-    fn display_handle(&self) -> Result<DisplayHandle, HandleError> {
+    fn display_handle(&self) -> Result<DisplayHandle<'_>, HandleError> {
         use self::SDL_SYSWM_TYPE::*;
 
         // Check if running on web before continuing,

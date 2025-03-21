@@ -598,6 +598,8 @@ struct RustWgpuBackend;
 #define CXXBRIDGE1_STRUCT_RustWgpuBackend
 struct RustWgpuBackend final : public ::rust::Opaque {
   void init_window(::std::uint8_t *window, ::std::uint32_t width, ::std::uint32_t height) noexcept;
+  void resize_event(::std::uint32_t width, ::std::uint32_t height) noexcept;
+  void swap() noexcept;
   void create_texture(::std::int32_t slot, ::std::uint32_t bytes_per_pixel, ::std::int32_t flags, ::std::uint32_t width, ::std::uint32_t height, ::rust::Slice<const ::std::uint8_t> data) noexcept;
   void update_texture(::std::int32_t slot, ::std::uint32_t x, ::std::uint32_t y, ::std::uint32_t width, ::std::uint32_t height, ::rust::Slice<const ::std::uint8_t> data) noexcept;
   void destroy_texture(::std::int32_t slot) noexcept;
@@ -626,6 +628,10 @@ void cxxbridge1$BackendWgpuGreetings(::rust::Slice<const ::StrRef> names) noexce
 
 void cxxbridge1$RustWgpuBackend$init_window(::RustWgpuBackend &self, ::std::uint8_t *window, ::std::uint32_t width, ::std::uint32_t height) noexcept;
 
+void cxxbridge1$RustWgpuBackend$resize_event(::RustWgpuBackend &self, ::std::uint32_t width, ::std::uint32_t height) noexcept;
+
+void cxxbridge1$RustWgpuBackend$swap(::RustWgpuBackend &self) noexcept;
+
 void cxxbridge1$RustWgpuBackend$create_texture(::RustWgpuBackend &self, ::std::int32_t slot, ::std::uint32_t bytes_per_pixel, ::std::int32_t flags, ::std::uint32_t width, ::std::uint32_t height, ::rust::Slice<const ::std::uint8_t> data) noexcept;
 
 void cxxbridge1$RustWgpuBackend$update_texture(::RustWgpuBackend &self, ::std::int32_t slot, ::std::uint32_t x, ::std::uint32_t y, ::std::uint32_t width, ::std::uint32_t height, ::rust::Slice<const ::std::uint8_t> data) noexcept;
@@ -653,6 +659,14 @@ void BackendWgpuGreetings(::rust::Slice<const ::StrRef> names) noexcept {
 
 void RustWgpuBackend::init_window(::std::uint8_t *window, ::std::uint32_t width, ::std::uint32_t height) noexcept {
   cxxbridge1$RustWgpuBackend$init_window(*this, window, width, height);
+}
+
+void RustWgpuBackend::resize_event(::std::uint32_t width, ::std::uint32_t height) noexcept {
+  cxxbridge1$RustWgpuBackend$resize_event(*this, width, height);
+}
+
+void RustWgpuBackend::swap() noexcept {
+  cxxbridge1$RustWgpuBackend$swap(*this);
 }
 
 void RustWgpuBackend::create_texture(::std::int32_t slot, ::std::uint32_t bytes_per_pixel, ::std::int32_t flags, ::std::uint32_t width, ::std::uint32_t height, ::rust::Slice<const ::std::uint8_t> data) noexcept {
