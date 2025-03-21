@@ -7,6 +7,8 @@ class CCommandProcessorFragment_WGPU : public CCommandProcessorFragment_GLBase
 	ERunCommandReturnTypes RunCommand(const CCommandBuffer::SCommand *pBaseCommand) override;
 	bool Cmd_PreInit(const SCommand_PreInit *pCommand);
 	bool Cmd_Init(const SCommand_Init *pCommand);
+	virtual void Cmd_UpdateViewport(const CCommandBuffer::SCommand_Update_Viewport *pCommand);
+	virtual void Cmd_Swap(const CCommandBuffer::SCommand_Swap *pCommand);
 	virtual void Cmd_Texture_Create(const CCommandBuffer::SCommand_Texture_Create *pCommand);
 	virtual void Cmd_Texture_Destroy(const CCommandBuffer::SCommand_Texture_Destroy *pCommand);
 	virtual void Cmd_TextTextures_Create(const CCommandBuffer::SCommand_TextTextures_Create *pCommand);

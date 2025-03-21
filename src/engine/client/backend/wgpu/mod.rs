@@ -19,6 +19,8 @@ mod ffi {
         type RustWgpuBackend<'a>;
         fn init_rust_wgpu_backend() -> Box<RustWgpuBackend<'static>>;
         unsafe fn init_window(&mut self, window: *mut u8, width: u32, height: u32);
+        fn resize_event(&mut self, width: u32, height: u32);
+        fn swap(&mut self);
         fn create_texture(
             &mut self,
             slot: i32,
@@ -61,9 +63,19 @@ struct RustWgpuBackend<'a> {
     adapter: wgpu::Adapter,
     device: wgpu::Device,
     queue: wgpu::Queue,
-    surface: Option<wgpu::Surface<'a>>,
+    reconfigure_surface: bool,
+    surface_configuration: wgpu::SurfaceConfiguration,
     /// Maps slot to texture
     textures_2d: HashMap<i32, wgpu::Texture>,
+    clear_color: wgpu::Color,
+    /// Initialized only after init call
+    surface: Option<wgpu::Surface<'a>>,
+    surface_texture: Option<wgpu::SurfaceTexture>,
+    /// Any mutation of this outside of the `swap` method will fail.
+    /// The lifetime of the render_pass is "forgotten".
+    /// We have to manually ensure this constraint.
+    command_encoder: Option<wgpu::CommandEncoder>,
+    render_pass: Option<wgpu::RenderPass<'static>>,
 }
 
 fn init_rust_wgpu_backend() -> Box<RustWgpuBackend<'static>> {
@@ -87,14 +99,30 @@ fn init_rust_wgpu_backend() -> Box<RustWgpuBackend<'static>> {
         )
         .block_on()
         .unwrap();
+    let surface_configuration = wgpu::SurfaceConfiguration {
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        format: wgpu::TextureFormat::Bgra8Unorm,
+        width: 0,
+        height: 0,
+        present_mode: wgpu::PresentMode::AutoVsync,
+        desired_maximum_frame_latency: 0,
+        alpha_mode: wgpu::CompositeAlphaMode::Auto,
+        view_formats: vec![],
+    };
 
     Box::new(RustWgpuBackend {
         instance,
         adapter,
         device,
         queue,
-        surface: None,
+        reconfigure_surface: false,
+        surface_configuration,
         textures_2d: HashMap::new(),
+        clear_color: wgpu::Color::RED,
+        surface: None,
+        surface_texture: None,
+        command_encoder: None,
+        render_pass: None,
     })
 }
 
@@ -107,21 +135,57 @@ impl RustWgpuBackend<'_> {
                 .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::from_window(&window).unwrap())
                 .unwrap()
         };
-        surface.configure(
-            &self.device,
-            &wgpu::SurfaceConfiguration {
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                format: wgpu::TextureFormat::Bgra8Unorm,
-                width,
-                height,
-                present_mode: wgpu::PresentMode::AutoVsync,
-                desired_maximum_frame_latency: 0,
-                alpha_mode: wgpu::CompositeAlphaMode::Auto,
-                view_formats: vec![],
-            },
-        );
+        self.surface_configuration.width = width;
+        self.surface_configuration.height = height;
+        surface.configure(&self.device, &self.surface_configuration);
         self.surface = Some(surface);
     }
+
+    fn resize_event(&mut self, width: u32, height: u32) {
+        self.reconfigure_surface = true;
+        self.surface_configuration.width = width;
+        self.surface_configuration.height = height;
+    }
+
+    /// Finishes the last frame, and starts the new frame.
+    pub fn swap(&mut self) {
+        std::mem::drop(self.render_pass.take());
+        if let Some(encoder) = self.command_encoder.take() {
+            self.queue.submit([encoder.finish()]);
+        }
+        if let Some(surface_texture) = self.surface_texture.take() {
+            surface_texture.present();
+        }
+        let Some(surface) = &self.surface else {
+            panic!("Swap without surface");
+        };
+        if self.reconfigure_surface {
+            surface.configure(&self.device, &self.surface_configuration);
+        }
+        let surface_texture = surface.get_current_texture().unwrap();
+        let mut command_encoder = self.device.create_command_encoder(&Default::default());
+        let render_pass = command_encoder
+            .begin_render_pass(&wgpu::RenderPassDescriptor {
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &surface_texture.texture.create_view(&Default::default()),
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(self.clear_color),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                ..Default::default()
+            })
+            .forget_lifetime();
+        self.surface_texture = Some(surface_texture);
+        self.command_encoder = Some(command_encoder);
+        self.render_pass = Some(render_pass);
+    }
+
+    fn clear(&mut self, r: f64, g: f64, b: f64, a: f64) {
+        self.clear_color = wgpu::Color { r, g, b, a };
+    }
+
     /// `bytes_per_pixel` determine the texture format. 4 -> Rgba, 1 -> R.
     fn create_texture(
         &mut self,
@@ -193,34 +257,5 @@ impl RustWgpuBackend<'_> {
         if self.textures_2d.remove(&slot).is_none() {
             panic!("Destroyed non-existing textures ({slot})");
         }
-    }
-
-    fn clear(&self, r: f64, g: f64, b: f64, a: f64) {
-        let Some(surface) = &self.surface else {
-            panic!("Clear without surface");
-        };
-        let frame = surface.get_current_texture().unwrap();
-        let mut command_encoder =
-            self.device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("Normal Frame"),
-                });
-        let render_pass = command_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("Just clear with color"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &frame
-                    .texture
-                    .create_view(&wgpu::TextureViewDescriptor::default()),
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color { r, g, b, a }),
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            ..Default::default()
-        });
-        std::mem::drop(render_pass);
-        self.queue.submit([command_encoder.finish()]);
-        frame.present();
     }
 }
