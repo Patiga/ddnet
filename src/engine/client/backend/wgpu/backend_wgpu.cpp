@@ -93,6 +93,43 @@ void CCommandProcessorFragment_WGPU::Cmd_Clear(const CCommandBuffer::SCommand_Cl
 
 void CCommandProcessorFragment_WGPU::Cmd_Render(const CCommandBuffer::SCommand_Render *pCommand)
 {
+	if(pCommand->m_State.m_ClipEnable)
+	{
+		dbg_assert(pCommand->m_State.m_ClipX >= 0 && pCommand->m_State.m_ClipY >= 0, "Invalid clip pos");
+		dbg_assert(pCommand->m_State.m_ClipW >= 0 && pCommand->m_State.m_ClipH >= 0, "Invalid clip pos");
+	}
+	dbg_assert(pCommand->m_PrimCount > 0, "Zero or negative primitive count");
+	size_t VertexCount = 0;
+	switch(pCommand->m_PrimType)
+	{
+	case EPrimitiveType::LINES:
+		VertexCount = pCommand->m_PrimCount * 2;
+		break;
+	case EPrimitiveType::TRIANGLES:
+		VertexCount = pCommand->m_PrimCount * 3;
+		break;
+	case EPrimitiveType::QUADS:
+		VertexCount = pCommand->m_PrimCount * 4;
+		break;
+	default:
+		return;
+	};
+	m_Rust->render(
+		(int)pCommand->m_State.m_BlendMode,
+		(int)pCommand->m_State.m_WrapMode,
+		pCommand->m_State.m_Texture,
+		pCommand->m_State.m_ScreenTL.x,
+		pCommand->m_State.m_ScreenTL.y,
+		pCommand->m_State.m_ScreenBR.x,
+		pCommand->m_State.m_ScreenBR.y,
+		pCommand->m_State.m_ClipEnable,
+		pCommand->m_State.m_ClipX,
+		pCommand->m_State.m_ClipY,
+		pCommand->m_State.m_ClipW,
+		pCommand->m_State.m_ClipH,
+		(int)pCommand->m_PrimType,
+		pCommand->m_PrimCount,
+		rust::Slice(reinterpret_cast<const uint8_t *>(pCommand->m_pVertices), VertexCount * sizeof(CCommandBuffer::SVertex)));
 }
 
 void CCommandProcessorFragment_WGPU::Cmd_Texture_Create(const CCommandBuffer::SCommand_Texture_Create *pCommand)

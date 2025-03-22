@@ -21,6 +21,24 @@ mod ffi {
         unsafe fn init_window(&mut self, window: *mut u8, width: u32, height: u32);
         fn resize_event(&mut self, width: u32, height: u32);
         fn swap(&mut self);
+        fn render(
+            &mut self,
+            blend_mode: i32,
+            wrap_mode: i32,
+            texture: i32,
+            screen_tl_x: f32,
+            screen_tl_y: f32,
+            screen_br_x: f32,
+            screen_br_y: f32,
+            clipping: bool,
+            clip_x: u32,
+            clip_y: u32,
+            clip_w: u32,
+            clip_h: u32,
+            primitive: u32,
+            primitive_count: u32,
+            vertices: &[u8],
+        );
         fn create_texture(
             &mut self,
             slot: i32,
@@ -184,6 +202,44 @@ impl RustWgpuBackend<'_> {
 
     fn clear(&mut self, r: f64, g: f64, b: f64, a: f64) {
         self.clear_color = wgpu::Color { r, g, b, a };
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn render(
+        &mut self,
+        _blend_mode: i32,
+        _wrap_mode: i32,
+        texture: i32,
+        _screen_tl_x: f32,
+        _screen_tl_y: f32,
+        _screen_br_x: f32,
+        _screen_br_y: f32,
+        _clipping: bool,
+        _clip_x: u32,
+        _clip_y: u32,
+        _clip_w: u32,
+        _clip_h: u32,
+        primitive: u32,
+        primitive_count: u32,
+        vertices: &[u8],
+    ) {
+        #[derive(Debug)]
+        enum Primitive {
+            Lines,
+            Quads,
+            Triangles,
+        }
+        let primitive = match primitive {
+            0 => panic!("Invalid primitive"),
+            1 => Primitive::Lines,
+            2 => Primitive::Quads,
+            3 => Primitive::Triangles,
+            _ => panic!("Unknown primitive"),
+        };
+        println!(
+            "Primitive {primitive:?} count: {primitive_count} buf size {}",
+            vertices.len()
+        );
     }
 
     /// `bytes_per_pixel` determine the texture format. 4 -> Rgba, 1 -> R.

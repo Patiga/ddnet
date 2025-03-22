@@ -600,6 +600,7 @@ struct RustWgpuBackend final : public ::rust::Opaque {
   void init_window(::std::uint8_t *window, ::std::uint32_t width, ::std::uint32_t height) noexcept;
   void resize_event(::std::uint32_t width, ::std::uint32_t height) noexcept;
   void swap() noexcept;
+  void render(::std::int32_t blend_mode, ::std::int32_t wrap_mode, ::std::int32_t texture, float screen_tl_x, float screen_tl_y, float screen_br_x, float screen_br_y, bool clipping, ::std::uint32_t clip_x, ::std::uint32_t clip_y, ::std::uint32_t clip_w, ::std::uint32_t clip_h, ::std::uint32_t primitive, ::std::uint32_t primitive_count, ::rust::Slice<const ::std::uint8_t> vertices) noexcept;
   void create_texture(::std::int32_t slot, ::std::uint32_t bytes_per_pixel, ::std::int32_t flags, ::std::uint32_t width, ::std::uint32_t height, ::rust::Slice<const ::std::uint8_t> data) noexcept;
   void update_texture(::std::int32_t slot, ::std::uint32_t x, ::std::uint32_t y, ::std::uint32_t width, ::std::uint32_t height, ::rust::Slice<const ::std::uint8_t> data) noexcept;
   void destroy_texture(::std::int32_t slot) noexcept;
@@ -631,6 +632,8 @@ void cxxbridge1$RustWgpuBackend$init_window(::RustWgpuBackend &self, ::std::uint
 void cxxbridge1$RustWgpuBackend$resize_event(::RustWgpuBackend &self, ::std::uint32_t width, ::std::uint32_t height) noexcept;
 
 void cxxbridge1$RustWgpuBackend$swap(::RustWgpuBackend &self) noexcept;
+
+void cxxbridge1$RustWgpuBackend$render(::RustWgpuBackend &self, ::std::int32_t blend_mode, ::std::int32_t wrap_mode, ::std::int32_t texture, float screen_tl_x, float screen_tl_y, float screen_br_x, float screen_br_y, bool clipping, ::std::uint32_t clip_x, ::std::uint32_t clip_y, ::std::uint32_t clip_w, ::std::uint32_t clip_h, ::std::uint32_t primitive, ::std::uint32_t primitive_count, ::rust::Slice<const ::std::uint8_t> vertices) noexcept;
 
 void cxxbridge1$RustWgpuBackend$create_texture(::RustWgpuBackend &self, ::std::int32_t slot, ::std::uint32_t bytes_per_pixel, ::std::int32_t flags, ::std::uint32_t width, ::std::uint32_t height, ::rust::Slice<const ::std::uint8_t> data) noexcept;
 
@@ -667,6 +670,10 @@ void RustWgpuBackend::resize_event(::std::uint32_t width, ::std::uint32_t height
 
 void RustWgpuBackend::swap() noexcept {
   cxxbridge1$RustWgpuBackend$swap(*this);
+}
+
+void RustWgpuBackend::render(::std::int32_t blend_mode, ::std::int32_t wrap_mode, ::std::int32_t texture, float screen_tl_x, float screen_tl_y, float screen_br_x, float screen_br_y, bool clipping, ::std::uint32_t clip_x, ::std::uint32_t clip_y, ::std::uint32_t clip_w, ::std::uint32_t clip_h, ::std::uint32_t primitive, ::std::uint32_t primitive_count, ::rust::Slice<const ::std::uint8_t> vertices) noexcept {
+  cxxbridge1$RustWgpuBackend$render(*this, blend_mode, wrap_mode, texture, screen_tl_x, screen_tl_y, screen_br_x, screen_br_y, clipping, clip_x, clip_y, clip_w, clip_h, primitive, primitive_count, vertices);
 }
 
 void RustWgpuBackend::create_texture(::std::int32_t slot, ::std::uint32_t bytes_per_pixel, ::std::int32_t flags, ::std::uint32_t width, ::std::uint32_t height, ::rust::Slice<const ::std::uint8_t> data) noexcept {
