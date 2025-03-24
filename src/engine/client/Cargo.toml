@@ -13,6 +13,7 @@ path = "lib.rs"
 ddnet-base = { path = "../../base" }
 ddnet-engine = { path = ".." }
 
+bytemuck = "1.22.0"
 cxx = "1.0"
 pollster = "0.4.0"
 wgpu = "24.0.1"

@@ -200,6 +200,7 @@ dependencies = [
 name = "ddnet-engine-client"
 version = "0.0.1"
 dependencies = [
+ "bytemuck",
  "cxx",
  "ddnet-base",
  "ddnet-engine",

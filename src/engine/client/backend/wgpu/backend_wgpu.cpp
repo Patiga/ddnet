@@ -65,14 +65,9 @@ bool CCommandProcessorFragment_WGPU::Cmd_Init(const SCommand_Init *pCommand)
 
 void CCommandProcessorFragment_WGPU::Cmd_UpdateViewport(const CCommandBuffer::SCommand_Update_Viewport *pCommand)
 {
-	if(pCommand->m_ByResize)
-	{
-		m_Rust->resize_event(pCommand->m_Width, pCommand->m_Height);
-	}
-	else
-	{
-		printf("Unimplemented viewport resizing");
-	}
+	dbg_assert(pCommand->m_X >= 0 && pCommand->m_Y >= 0, "Negative view port pos");
+	dbg_assert(pCommand->m_Width >= 0 && pCommand->m_Height >= 0, "Negative view port size");
+	m_Rust->update_viewport(pCommand->m_X, pCommand->m_Y, pCommand->m_Width, pCommand->m_Height, pCommand->m_ByResize);
 }
 
 void CCommandProcessorFragment_WGPU::Cmd_Swap(const CCommandBuffer::SCommand_Swap *pCommand)
@@ -97,21 +92,22 @@ void CCommandProcessorFragment_WGPU::Cmd_Render(const CCommandBuffer::SCommand_R
 		dbg_assert(pCommand->m_State.m_ClipW >= 0 && pCommand->m_State.m_ClipH >= 0, "Invalid clip pos");
 	}
 	dbg_assert(pCommand->m_PrimCount > 0, "Zero or negative primitive count");
-	size_t VertexCount = 0;
+	size_t VertexCount = pCommand->m_PrimCount;
 	switch(pCommand->m_PrimType)
 	{
 	case CCommandBuffer::PRIMTYPE_LINES:
-		VertexCount = pCommand->m_PrimType * 2;
+		VertexCount *= 2;
 		break;
 	case CCommandBuffer::PRIMTYPE_TRIANGLES:
-		VertexCount = pCommand->m_PrimType * 3;
+		VertexCount *= 3;
 		break;
 	case CCommandBuffer::PRIMTYPE_QUADS:
-		VertexCount = pCommand->m_PrimType * 4;
+		VertexCount *= 4;
 		break;
 	default:
 		return;
 	};
+	size_t VertexBytes = VertexCount * sizeof(CCommandBuffer::SVertex);
 	m_Rust->render(
 		pCommand->m_State.m_BlendMode,
 		pCommand->m_State.m_WrapMode,
@@ -127,7 +123,7 @@ void CCommandProcessorFragment_WGPU::Cmd_Render(const CCommandBuffer::SCommand_R
 		pCommand->m_State.m_ClipH,
 		pCommand->m_PrimType,
 		pCommand->m_PrimCount,
-		rust::Slice(reinterpret_cast<const uint8_t *>(pCommand->m_pVertices), VertexCount * sizeof(CCommandBuffer::SVertex)));
+		rust::Slice(reinterpret_cast<const uint8_t *>(pCommand->m_pVertices), VertexBytes));
 }
 
 void CCommandProcessorFragment_WGPU::Cmd_Texture_Create(const CCommandBuffer::SCommand_Texture_Create *pCommand)

@@ -1,4 +1,5 @@
-use std::collections::HashMap;
+use core::f32;
+use std::{collections::HashMap, num::NonZero};
 
 use ddnet_base::StrRef;
 use pollster::FutureExt;
@@ -19,7 +20,7 @@ mod ffi {
         type RustWgpuBackend<'a>;
         fn init_rust_wgpu_backend() -> Box<RustWgpuBackend<'static>>;
         unsafe fn init_window(&mut self, window: *mut u8, width: u32, height: u32);
-        fn resize_event(&mut self, width: u32, height: u32);
+        fn update_viewport(&mut self, x: i32, y: i32, w: u32, h: u32, by_resize: bool);
         fn swap(&mut self);
         fn render(
             &mut self,
@@ -83,6 +84,11 @@ struct RustWgpuBackend<'a> {
     queue: wgpu::Queue,
     reconfigure_surface: bool,
     surface_configuration: wgpu::SurfaceConfiguration,
+    pipelines: Pipelines,
+    samplers: Samplers,
+    state_matrix: StateMatrix,
+    bind_groups: BindGroups,
+    index_buffer: IndexBuffer,
     /// Maps slot to texture
     textures_2d: HashMap<i32, wgpu::Texture>,
     clear_color: wgpu::Color,
@@ -105,43 +111,61 @@ fn init_rust_wgpu_backend() -> Box<RustWgpuBackend<'static>> {
         })
         .block_on()
         .unwrap();
+    let adapter_limits = adapter.limits();
+    let required_limits = wgpu::Limits {
+        max_texture_dimension_2d: adapter_limits.max_texture_dimension_2d,
+        ..wgpu::Limits::downlevel_webgl2_defaults()
+    };
     let (device, queue) = adapter
         .request_device(
             &wgpu::DeviceDescriptor {
                 label: None,
                 required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::downlevel_webgl2_defaults(),
+                required_limits,
                 memory_hints: wgpu::MemoryHints::Performance,
             },
             None,
         )
         .block_on()
         .unwrap();
+    let format = wgpu::TextureFormat::Bgra8Unorm;
     let surface_configuration = wgpu::SurfaceConfiguration {
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-        format: wgpu::TextureFormat::Bgra8Unorm,
+        format,
         width: 0,
         height: 0,
-        present_mode: wgpu::PresentMode::AutoVsync,
+        present_mode: wgpu::PresentMode::AutoNoVsync,
         desired_maximum_frame_latency: 0,
         alpha_mode: wgpu::CompositeAlphaMode::Auto,
         view_formats: vec![],
     };
+    let samplers = Samplers::new(&device);
+    let state_matrix = StateMatrix::new(0., 0., 1., 1., &device);
+    let bind_groups = BindGroups::new(&samplers, &state_matrix, &device);
+    let pipelines = Pipelines::new(&device, &bind_groups, format);
+    let index_buffer = IndexBuffer::new(&device);
 
-    Box::new(RustWgpuBackend {
+    let mut backend = RustWgpuBackend {
         instance,
         adapter,
         device,
         queue,
         reconfigure_surface: false,
         surface_configuration,
+        pipelines,
+        samplers,
+        state_matrix,
+        bind_groups,
+        index_buffer,
         textures_2d: HashMap::new(),
         clear_color: wgpu::Color::RED,
         surface: None,
         surface_texture: None,
         command_encoder: None,
         render_pass: None,
-    })
+    };
+    backend.create_texture(-1, 4, 0, 1, 1, &[255, 255, 255, 255]);
+    Box::new(backend)
 }
 
 impl RustWgpuBackend<'_> {
@@ -159,10 +183,15 @@ impl RustWgpuBackend<'_> {
         self.surface = Some(surface);
     }
 
-    fn resize_event(&mut self, width: u32, height: u32) {
-        self.reconfigure_surface = true;
-        self.surface_configuration.width = width;
-        self.surface_configuration.height = height;
+    fn update_viewport(&mut self, x: i32, y: i32, w: u32, h: u32, by_resize: bool) {
+        if by_resize {
+            self.reconfigure_surface = true;
+            self.surface_configuration.width = w;
+            self.surface_configuration.height = h;
+        }
+        if let Some(render_pass) = &mut self.render_pass {
+            render_pass.set_viewport(x as f32, y as f32, w as f32, h as f32, 0., 1.);
+        };
     }
 
     /// Finishes the last frame, and starts the new frame.
@@ -178,11 +207,12 @@ impl RustWgpuBackend<'_> {
             panic!("Swap without surface");
         };
         if self.reconfigure_surface {
+            self.reconfigure_surface = false;
             surface.configure(&self.device, &self.surface_configuration);
         }
         let surface_texture = surface.get_current_texture().unwrap();
         let mut command_encoder = self.device.create_command_encoder(&Default::default());
-        let render_pass = command_encoder
+        let mut render_pass = command_encoder
             .begin_render_pass(&wgpu::RenderPassDescriptor {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &surface_texture.texture.create_view(&Default::default()),
@@ -195,6 +225,11 @@ impl RustWgpuBackend<'_> {
                 ..Default::default()
             })
             .forget_lifetime();
+        render_pass.set_pipeline(&self.pipelines.pipeline);
+        render_pass.set_index_buffer(
+            self.index_buffer.buffer.slice(..),
+            wgpu::IndexFormat::Uint32,
+        );
         self.surface_texture = Some(surface_texture);
         self.command_encoder = Some(command_encoder);
         self.render_pass = Some(render_pass);
@@ -208,12 +243,12 @@ impl RustWgpuBackend<'_> {
     fn render(
         &mut self,
         _blend_mode: i32,
-        _wrap_mode: i32,
+        wrap_mode: i32,
         texture: i32,
-        _screen_tl_x: f32,
-        _screen_tl_y: f32,
-        _screen_br_x: f32,
-        _screen_br_y: f32,
+        screen_tl_x: f32,
+        screen_tl_y: f32,
+        screen_br_x: f32,
+        screen_br_y: f32,
         _clipping: bool,
         _clip_x: u32,
         _clip_y: u32,
@@ -236,10 +271,47 @@ impl RustWgpuBackend<'_> {
             3 => Primitive::Triangles,
             _ => panic!("Unknown primitive"),
         };
-        println!(
-            "Primitive {primitive:?} count: {primitive_count} buf size {}",
-            vertices.len()
+        let address_mode = match wrap_mode {
+            0 => wgpu::AddressMode::Repeat,
+            1 => wgpu::AddressMode::ClampToEdge,
+            _ => panic!("Unknown adress mode"),
+        };
+        self.state_matrix.update_bind_group(
+            screen_tl_x,
+            screen_tl_y,
+            screen_br_x,
+            screen_br_y,
+            &mut self.bind_groups,
+            &self.device,
         );
+        let Some(render_pass) = &mut self.render_pass else {
+            panic!("Render call without render pass");
+        };
+        render_pass.set_bind_group(0, Some(self.bind_groups.get_sampler(address_mode)), &[]);
+        render_pass.set_bind_group(1, Some(&self.bind_groups.last_state_matrix), &[]);
+        render_pass.set_bind_group(2, Some(self.bind_groups.get_texture(texture).unwrap()), &[]);
+        let vertex_buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Vertex Buffer"),
+                contents: vertices,
+                usage: wgpu::BufferUsages::VERTEX,
+            });
+        render_pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+        if !self
+            .index_buffer
+            .ensure_length(primitive_count as usize, &self.device)
+        {
+            render_pass.set_index_buffer(
+                self.index_buffer.buffer.slice(..),
+                wgpu::IndexFormat::Uint32,
+            );
+        }
+        match primitive {
+            Primitive::Lines => {}
+            Primitive::Quads => render_pass.draw_indexed(0..primitive_count * 6, 0, 0..1),
+            Primitive::Triangles => render_pass.draw(0..primitive_count * 3, 0..1),
+        }
     }
 
     /// `bytes_per_pixel` determine the texture format. 4 -> Rgba, 1 -> R.
@@ -272,12 +344,13 @@ impl RustWgpuBackend<'_> {
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             },
             wgpu::util::TextureDataOrder::LayerMajor,
             data,
         );
+        self.bind_groups.add_texture(slot, &texture, &self.device);
         self.textures_2d.insert(slot, texture);
     }
 
@@ -313,5 +386,304 @@ impl RustWgpuBackend<'_> {
         if self.textures_2d.remove(&slot).is_none() {
             panic!("Destroyed non-existing textures ({slot})");
         }
+    }
+}
+
+struct Samplers {
+    repeat: wgpu::Sampler,
+    clamp: wgpu::Sampler,
+}
+
+struct Pipelines {
+    pipeline: wgpu::RenderPipeline,
+}
+
+impl Pipelines {
+    fn new(device: &wgpu::Device, bind_groups: &BindGroups, format: wgpu::TextureFormat) -> Self {
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            bind_group_layouts: &[
+                &bind_groups.sampler_bind_group_layout,
+                &bind_groups.state_matrix_bind_group_layout,
+                &bind_groups.texture_bind_group_layout,
+            ],
+            ..Default::default()
+        });
+        let shader = device.create_shader_module(wgpu::include_wgsl!("sprites_textured.wgsl"));
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: None,
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                buffers: &[wgpu::VertexBufferLayout {
+                    array_stride: 5 * 4,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &wgpu::vertex_attr_array![
+                        0 => Float32x2, 1 => Float32x2, 2 => Unorm8x4
+                    ],
+                }],
+            },
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::all(),
+                })],
+            }),
+            multiview: None,
+            cache: None,
+        });
+        Self { pipeline }
+    }
+}
+
+impl Samplers {
+    fn new(device: &wgpu::Device) -> Self {
+        let [repeat, clamp] =
+            [wgpu::AddressMode::Repeat, wgpu::AddressMode::ClampToEdge].map(|address_mode| {
+                device.create_sampler(&wgpu::SamplerDescriptor {
+                    address_mode_u: address_mode,
+                    address_mode_v: address_mode,
+                    address_mode_w: address_mode,
+                    mag_filter: wgpu::FilterMode::Linear,
+                    min_filter: wgpu::FilterMode::Linear,
+                    mipmap_filter: wgpu::FilterMode::Linear,
+                    ..Default::default()
+                })
+            });
+        Self { repeat, clamp }
+    }
+
+    fn get(&self, address_mode: wgpu::AddressMode) -> &wgpu::Sampler {
+        match address_mode {
+            wgpu::AddressMode::ClampToEdge => &self.clamp,
+            wgpu::AddressMode::Repeat => &self.repeat,
+            _ => panic!("Invalid sampler address mode"),
+        }
+    }
+}
+
+struct BindGroups {
+    sampler_bind_group_layout: wgpu::BindGroupLayout,
+    state_matrix_bind_group_layout: wgpu::BindGroupLayout,
+    texture_bind_group_layout: wgpu::BindGroupLayout,
+    sampler_repeat: wgpu::BindGroup,
+    sampler_clamp: wgpu::BindGroup,
+    last_state_matrix: wgpu::BindGroup,
+    textures: HashMap<i32, wgpu::BindGroup>,
+}
+
+impl BindGroups {
+    fn new(samplers: &Samplers, state_matrix: &StateMatrix, device: &wgpu::Device) -> Self {
+        let sampler_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Sampler"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                }],
+            });
+        let state_matrix_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("State Matrix"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: Some(NonZero::new(2 * 4 * 4).unwrap()),
+                    },
+                    count: None,
+                }],
+            });
+        let texture_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Texture"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                }],
+            });
+        let [sampler_repeat, sampler_clamp] =
+            [wgpu::AddressMode::Repeat, wgpu::AddressMode::ClampToEdge].map(|address_mode| {
+                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("Sampler Bind Group"),
+                    layout: &sampler_bind_group_layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::Sampler(samplers.get(address_mode)),
+                    }],
+                })
+            });
+        let last_state_matrix =
+            Self::state_matrix_bind_group(state_matrix, &state_matrix_bind_group_layout, device);
+        Self {
+            sampler_bind_group_layout,
+            state_matrix_bind_group_layout,
+            texture_bind_group_layout,
+            sampler_repeat,
+            sampler_clamp,
+            last_state_matrix,
+            textures: HashMap::default(),
+        }
+    }
+
+    fn get_sampler(&mut self, address_mode: wgpu::AddressMode) -> &wgpu::BindGroup {
+        match address_mode {
+            wgpu::AddressMode::Repeat => &self.sampler_repeat,
+            wgpu::AddressMode::ClampToEdge => &self.sampler_clamp,
+            _ => panic!("Invalid address mode"),
+        }
+    }
+
+    fn state_matrix_bind_group(
+        state_matrix: &StateMatrix,
+        layout: &wgpu::BindGroupLayout,
+        device: &wgpu::Device,
+    ) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &state_matrix.buffer,
+                    offset: 0,
+                    size: None,
+                }),
+            }],
+        })
+    }
+
+    fn update_state_matrix(&mut self, state_matrix: &StateMatrix, device: &wgpu::Device) {
+        self.last_state_matrix = Self::state_matrix_bind_group(
+            state_matrix,
+            &self.state_matrix_bind_group_layout,
+            device,
+        )
+    }
+
+    fn add_texture(&mut self, slot: i32, texture: &wgpu::Texture, device: &wgpu::Device) {
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &self.texture_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(
+                    &texture.create_view(&wgpu::TextureViewDescriptor::default()),
+                ),
+            }],
+        });
+        self.textures.insert(slot, bind_group);
+    }
+
+    fn get_texture(&mut self, slot: i32) -> Option<&wgpu::BindGroup> {
+        self.textures.get(&slot)
+    }
+}
+
+struct StateMatrix {
+    tl_x: f32,
+    tl_y: f32,
+    br_x: f32,
+    br_y: f32,
+    buffer: wgpu::Buffer,
+}
+
+impl StateMatrix {
+    fn new(tl_x: f32, tl_y: f32, br_x: f32, br_y: f32, device: &wgpu::Device) -> Self {
+        let state_matrix: [[f32; 2]; 4] = [
+            [2. / (br_x - tl_x), 0.],
+            [0., (2. / (tl_y - br_y))],
+            [0., 0.],
+            [
+                -((br_x + tl_x) / (br_x - tl_x)),
+                -((tl_y + br_y) / (tl_y - br_y)),
+            ],
+        ];
+        Self {
+            tl_x: 0.,
+            tl_y: 0.,
+            br_x: 0.,
+            br_y: 0.,
+            buffer: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("State matrix"),
+                contents: bytemuck::cast_slice(&state_matrix),
+                usage: wgpu::BufferUsages::UNIFORM,
+            }),
+        }
+    }
+
+    fn update_bind_group<'a>(
+        &mut self,
+        tl_x: f32,
+        tl_y: f32,
+        br_x: f32,
+        br_y: f32,
+        bind_groups: &'a mut BindGroups,
+        device: &wgpu::Device,
+    ) -> &'a wgpu::BindGroup {
+        if self.tl_x == tl_x && self.tl_y == tl_y && self.br_x == br_x && self.br_y == br_y {
+            &bind_groups.last_state_matrix
+        } else {
+            *self = Self::new(tl_x, tl_y, br_x, br_y, device);
+            bind_groups.update_state_matrix(self, device);
+            &bind_groups.last_state_matrix
+        }
+    }
+}
+
+struct IndexBuffer {
+    len: usize,
+    buffer: wgpu::Buffer,
+}
+
+impl IndexBuffer {
+    fn new(device: &wgpu::Device) -> Self {
+        let len = 8;
+        Self {
+            len,
+            buffer: Self::buffer_for_len(8, device),
+        }
+    }
+    /// Returns false, if the buffer was too small and was remade.
+    fn ensure_length(&mut self, len: usize, device: &wgpu::Device) -> bool {
+        if self.len < len {
+            self.len = len.next_power_of_two();
+            self.buffer = Self::buffer_for_len(self.len, device);
+            false
+        } else {
+            true
+        }
+    }
+
+    fn buffer_for_len(len: usize, device: &wgpu::Device) -> wgpu::Buffer {
+        let buffer: Vec<u32> = (0..len as u32)
+            .flat_map(|i| [0, 1, 2, 0, 3, 2].map(|x| x + i * 4))
+            .collect();
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Index buffer"),
+            contents: bytemuck::cast_slice(buffer.as_slice()),
+            usage: wgpu::BufferUsages::INDEX,
+        })
     }
 }
