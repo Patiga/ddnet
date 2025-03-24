@@ -852,6 +852,7 @@ set_glob(RUST_ENGINE_CLIENT GLOB_RECURSE "rs;toml" src/engine/client
   backend/mod.rs
   backend/wgpu/mod.rs
   backend/wgpu/window_handle.rs
+  backend/wgpu/sprites_textured.wgsl
   lib.rs
 )
 
