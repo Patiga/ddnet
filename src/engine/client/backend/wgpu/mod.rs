@@ -92,9 +92,10 @@ struct RustWgpuBackend<'a> {
     /// Maps slot to texture
     textures_2d: HashMap<i32, wgpu::Texture>,
     clear_color: wgpu::Color,
-    /// Initialized only after init call
-    surface: Option<wgpu::Surface<'a>>,
+    /// All following fields are initialized only upon Init call.
+    /// The surface_texture needs to be dropped before the surface!
     surface_texture: Option<wgpu::SurfaceTexture>,
+    surface: Option<wgpu::Surface<'a>>,
     /// Any mutation of this outside of the `swap` method will fail.
     /// The lifetime of the render_pass is "forgotten".
     /// We have to manually ensure this constraint.
@@ -159,8 +160,8 @@ fn init_rust_wgpu_backend() -> Box<RustWgpuBackend<'static>> {
         index_buffer,
         textures_2d: HashMap::new(),
         clear_color: wgpu::Color::RED,
-        surface: None,
         surface_texture: None,
+        surface: None,
         command_encoder: None,
         render_pass: None,
     };
@@ -183,15 +184,17 @@ impl RustWgpuBackend<'_> {
         self.surface = Some(surface);
     }
 
-    fn update_viewport(&mut self, x: i32, y: i32, w: u32, h: u32, by_resize: bool) {
+    fn update_viewport(&mut self, _x: i32, _y: i32, w: u32, h: u32, by_resize: bool) {
         if by_resize {
             self.reconfigure_surface = true;
             self.surface_configuration.width = w;
             self.surface_configuration.height = h;
         }
+        /* This code caused crashes upon entering full screen and should not be needed.
         if let Some(render_pass) = &mut self.render_pass {
             render_pass.set_viewport(x as f32, y as f32, w as f32, h as f32, 0., 1.);
         };
+        */
     }
 
     /// Finishes the last frame, and starts the new frame.
