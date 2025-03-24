@@ -1023,6 +1023,7 @@ bool CGraphicsBackend_SDL_GL::GetDriverVersion(EGraphicsDriverAgeType DriverAgeT
 	else if(BackendType == BACKEND_TYPE_WGPU)
 	{
 		pName = "WGPU";
+		if (DriverAgeType == GRAPHICS_DRIVER_AGE_TYPE_DEFAULT) 
 		{
 			Major = 24;
 			Minor = 1;
