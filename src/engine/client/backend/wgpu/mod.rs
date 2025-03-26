@@ -3,7 +3,7 @@ use std::{collections::HashMap, num::NonZero};
 
 use ddnet_base::StrRef;
 use pollster::FutureExt;
-use wgpu::util::DeviceExt;
+use wgpu::{util::DeviceExt, BufferSlice};
 
 mod window_handle;
 
@@ -88,6 +88,7 @@ struct RustWgpuBackend<'a> {
     samplers: Samplers,
     state_matrix: StateMatrix,
     bind_groups: BindGroups,
+    vertex_buffer: VertexBuffer,
     index_buffer: IndexBuffer,
     /// Maps slot to texture
     textures_2d: HashMap<i32, wgpu::Texture>,
@@ -144,6 +145,7 @@ fn init_rust_wgpu_backend() -> Box<RustWgpuBackend<'static>> {
     let state_matrix = StateMatrix::new(0., 0., 1., 1., &device);
     let bind_groups = BindGroups::new(&samplers, &state_matrix, &device);
     let pipelines = Pipelines::new(&device, &bind_groups, format);
+    let vertex_buffer = VertexBuffer::new(&device);
     let index_buffer = IndexBuffer::new(&device);
 
     let mut backend = RustWgpuBackend {
@@ -157,6 +159,7 @@ fn init_rust_wgpu_backend() -> Box<RustWgpuBackend<'static>> {
         samplers,
         state_matrix,
         bind_groups,
+        vertex_buffer,
         index_buffer,
         textures_2d: HashMap::new(),
         clear_color: wgpu::Color::RED,
@@ -199,6 +202,7 @@ impl RustWgpuBackend<'_> {
 
     /// Finishes the last frame, and starts the new frame.
     pub fn swap(&mut self) {
+        self.vertex_buffer.finalize_buffers(&self.queue);
         std::mem::drop(self.render_pass.take());
         if let Some(encoder) = self.command_encoder.take() {
             self.queue.submit([encoder.finish()]);
@@ -308,14 +312,10 @@ impl RustWgpuBackend<'_> {
         render_pass.set_bind_group(0, Some(self.bind_groups.get_sampler(address_mode)), &[]);
         render_pass.set_bind_group(1, Some(&self.bind_groups.last_state_matrix), &[]);
         render_pass.set_bind_group(2, Some(self.bind_groups.get_texture(texture).unwrap()), &[]);
-        let vertex_buffer = self
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Vertex Buffer"),
-                contents: vertices,
-                usage: wgpu::BufferUsages::VERTEX,
-            });
-        render_pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+        let vertex_slice = self
+            .vertex_buffer
+            .reserve_vertices(vertices, &self.device, &self.queue);
+        render_pass.set_vertex_buffer(0, vertex_slice);
         if !self
             .index_buffer
             .ensure_length(primitive_count as usize, &self.device)
@@ -667,6 +667,58 @@ impl StateMatrix {
             bind_groups.update_state_matrix(self, device);
             &bind_groups.last_state_matrix
         }
+    }
+}
+
+struct VertexBuffer {
+    cache: Vec<u8>,
+    buffer: wgpu::Buffer,
+}
+
+impl VertexBuffer {
+    fn new(device: &wgpu::Device) -> Self {
+        let cache = Vec::with_capacity(1024);
+        let buffer = Self::create_buffer(cache.capacity(), device);
+        Self { cache, buffer }
+    }
+
+    fn reserve_vertices(
+        &mut self,
+        vertex_data: &[u8],
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> BufferSlice {
+        if self.cache.capacity() - self.cache.len() >= vertex_data.len() {
+            // Enough space
+            let offset = self.cache.len();
+            let cap_before = self.cache.capacity();
+            self.cache.extend_from_slice(vertex_data);
+            assert_eq!(cap_before, self.cache.capacity());
+            self.buffer
+                .slice(offset as u64..(offset + vertex_data.len()) as u64)
+        } else {
+            queue.write_buffer(&self.buffer, 0, self.cache.as_slice());
+            let offset = self.cache.len();
+            self.cache.extend_from_slice(vertex_data);
+            let new_capacity = self.cache.capacity();
+            self.buffer = Self::create_buffer(new_capacity, device);
+            self.buffer
+                .slice(offset as u64..(offset + vertex_data.len()) as u64)
+        }
+    }
+
+    fn create_buffer(cap: usize, device: &wgpu::Device) -> wgpu::Buffer {
+        device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Vertex Buffer"),
+            size: cap as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        })
+    }
+
+    fn finalize_buffers(&mut self, queue: &wgpu::Queue) {
+        queue.write_buffer(&self.buffer, 0, self.cache.as_slice());
+        self.cache.clear();
     }
 }
 
