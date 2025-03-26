@@ -252,11 +252,11 @@ impl RustWgpuBackend<'_> {
         screen_tl_y: f32,
         screen_br_x: f32,
         screen_br_y: f32,
-        _clipping: bool,
-        _clip_x: u32,
-        _clip_y: u32,
-        _clip_w: u32,
-        _clip_h: u32,
+        clipping: bool,
+        clip_x: u32,
+        clip_y: u32,
+        clip_w: u32,
+        clip_h: u32,
         primitive: u32,
         primitive_count: u32,
         vertices: &[u8],
@@ -277,7 +277,7 @@ impl RustWgpuBackend<'_> {
         let address_mode = match wrap_mode {
             0 => wgpu::AddressMode::Repeat,
             1 => wgpu::AddressMode::ClampToEdge,
-            _ => panic!("Unknown adress mode"),
+            _ => panic!("Unknown address mode"),
         };
         self.state_matrix.update_bind_group(
             screen_tl_x,
@@ -290,6 +290,21 @@ impl RustWgpuBackend<'_> {
         let Some(render_pass) = &mut self.render_pass else {
             panic!("Render call without render pass");
         };
+        let Some(surface_texture) = &self.surface_texture else {
+            panic!("Render call without surface texture");
+        };
+        let target_width = surface_texture.texture.width();
+        let target_height = surface_texture.texture.height();
+        if clipping {
+            // Mirror the clipping vertically for wgpu
+            let clip_y = surface_texture.texture.height() - clip_y - clip_h;
+            let clipped_clip_w = clip_w.min(target_width - clip_y);
+            let clipped_clip_h = clip_h.min(target_height - clip_y);
+            // Might need to be clipped to surface texture size
+            render_pass.set_scissor_rect(clip_x, clip_y, clipped_clip_w, clipped_clip_h);
+        } else {
+            render_pass.set_scissor_rect(0, 0, target_width, target_height);
+        }
         render_pass.set_bind_group(0, Some(self.bind_groups.get_sampler(address_mode)), &[]);
         render_pass.set_bind_group(1, Some(&self.bind_groups.last_state_matrix), &[]);
         render_pass.set_bind_group(2, Some(self.bind_groups.get_texture(texture).unwrap()), &[]);
