@@ -1,5 +1,5 @@
 use core::f32;
-use std::{collections::HashMap, num::NonZero};
+use std::{collections::HashMap, num::NonZero, ops::Range};
 
 use ddnet_base::StrRef;
 use pollster::FutureExt;
@@ -86,9 +86,9 @@ struct RustWgpuBackend<'a> {
     surface_configuration: wgpu::SurfaceConfiguration,
     pipelines: Pipelines,
     samplers: Samplers,
-    state_matrix: StateMatrix,
+    state_matrix: StateMatrices,
     bind_groups: BindGroups,
-    vertex_buffer: VertexBuffer,
+    vertex_buffer: CacheBuffer<u8>,
     index_buffer: IndexBuffer,
     /// Maps slot to texture
     textures_2d: HashMap<i32, wgpu::Texture>,
@@ -142,10 +142,14 @@ fn init_rust_wgpu_backend() -> Box<RustWgpuBackend<'static>> {
         view_formats: vec![],
     };
     let samplers = Samplers::new(&device);
-    let state_matrix = StateMatrix::new(0., 0., 1., 1., &device);
+    let state_matrix = StateMatrices::new(&device);
     let bind_groups = BindGroups::new(&samplers, &state_matrix, &device);
     let pipelines = Pipelines::new(&device, &bind_groups, format);
-    let vertex_buffer = VertexBuffer::new(&device);
+    let vertex_buffer = CacheBuffer::new(
+        Some("Vertex Buffer".into()),
+        wgpu::BufferUsages::VERTEX,
+        &device,
+    );
     let index_buffer = IndexBuffer::new(&device);
 
     let mut backend = RustWgpuBackend {
@@ -202,7 +206,8 @@ impl RustWgpuBackend<'_> {
 
     /// Finishes the last frame, and starts the new frame.
     pub fn swap(&mut self) {
-        self.vertex_buffer.finalize_buffers(&self.queue);
+        self.vertex_buffer.upload_and_reset(&self.queue);
+        self.state_matrix.upload_and_reset(&self.queue);
         std::mem::drop(self.render_pass.take());
         if let Some(encoder) = self.command_encoder.take() {
             self.queue.submit([encoder.finish()]);
@@ -283,13 +288,14 @@ impl RustWgpuBackend<'_> {
             1 => wgpu::AddressMode::ClampToEdge,
             _ => panic!("Unknown address mode"),
         };
-        self.state_matrix.update_bind_group(
+        let offset = self.state_matrix.get_bind_group_offset(
             screen_tl_x,
             screen_tl_y,
             screen_br_x,
             screen_br_y,
             &mut self.bind_groups,
             &self.device,
+            &self.queue,
         );
         let Some(render_pass) = &mut self.render_pass else {
             panic!("Render call without render pass");
@@ -310,11 +316,15 @@ impl RustWgpuBackend<'_> {
             render_pass.set_scissor_rect(0, 0, target_width, target_height);
         }
         render_pass.set_bind_group(0, Some(self.bind_groups.get_sampler(address_mode)), &[]);
-        render_pass.set_bind_group(1, Some(&self.bind_groups.last_state_matrix), &[]);
+        render_pass.set_bind_group(1, Some(&self.bind_groups.state_matrix), &[offset as u32]);
         render_pass.set_bind_group(2, Some(self.bind_groups.get_texture(texture).unwrap()), &[]);
-        let vertex_slice = self
+        let vertex_slice = match self
             .vertex_buffer
-            .reserve_vertices(vertices, &self.device, &self.queue);
+            .reserve(vertices, &self.device, &self.queue)
+        {
+            Ok((buffer_slice, _)) => buffer_slice,
+            Err((buffer_slice, _)) => buffer_slice,
+        };
         render_pass.set_vertex_buffer(0, vertex_slice);
         if !self
             .index_buffer
@@ -497,12 +507,12 @@ struct BindGroups {
     texture_bind_group_layout: wgpu::BindGroupLayout,
     sampler_repeat: wgpu::BindGroup,
     sampler_clamp: wgpu::BindGroup,
-    last_state_matrix: wgpu::BindGroup,
+    state_matrix: wgpu::BindGroup,
     textures: HashMap<i32, wgpu::BindGroup>,
 }
 
 impl BindGroups {
-    fn new(samplers: &Samplers, state_matrix: &StateMatrix, device: &wgpu::Device) -> Self {
+    fn new(samplers: &Samplers, state_matrix: &StateMatrices, device: &wgpu::Device) -> Self {
         let sampler_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("Sampler"),
@@ -521,7 +531,7 @@ impl BindGroups {
                     visibility: wgpu::ShaderStages::VERTEX,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
+                        has_dynamic_offset: true,
                         min_binding_size: Some(NonZero::new(2 * 4 * 4).unwrap()),
                     },
                     count: None,
@@ -560,7 +570,7 @@ impl BindGroups {
             texture_bind_group_layout,
             sampler_repeat,
             sampler_clamp,
-            last_state_matrix,
+            state_matrix: last_state_matrix,
             textures: HashMap::default(),
         }
     }
@@ -574,7 +584,7 @@ impl BindGroups {
     }
 
     fn state_matrix_bind_group(
-        state_matrix: &StateMatrix,
+        state_matrix: &StateMatrices,
         layout: &wgpu::BindGroupLayout,
         device: &wgpu::Device,
     ) -> wgpu::BindGroup {
@@ -584,16 +594,16 @@ impl BindGroups {
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: &state_matrix.buffer,
+                    buffer: &state_matrix.buffer.buffer,
                     offset: 0,
-                    size: None,
+                    size: Some(NonZero::new(8 * 4).unwrap()),
                 }),
             }],
         })
     }
 
-    fn update_state_matrix(&mut self, state_matrix: &StateMatrix, device: &wgpu::Device) {
-        self.last_state_matrix = Self::state_matrix_bind_group(
+    fn update_state_matrix(&mut self, state_matrix: &StateMatrices, device: &wgpu::Device) {
+        self.state_matrix = Self::state_matrix_bind_group(
             state_matrix,
             &self.state_matrix_bind_group_layout,
             device,
@@ -619,17 +629,18 @@ impl BindGroups {
     }
 }
 
-struct StateMatrix {
+struct StateMatrices {
     tl_x: f32,
     tl_y: f32,
     br_x: f32,
     br_y: f32,
-    buffer: wgpu::Buffer,
+    last_offset: Option<u64>,
+    buffer: CacheBuffer<[[f32; 2]; 4]>,
 }
 
-impl StateMatrix {
-    fn new(tl_x: f32, tl_y: f32, br_x: f32, br_y: f32, device: &wgpu::Device) -> Self {
-        let state_matrix: [[f32; 2]; 4] = [
+impl StateMatrices {
+    fn matrix(tl_x: f32, tl_y: f32, br_x: f32, br_y: f32) -> [[f32; 2]; 4] {
+        [
             [2. / (br_x - tl_x), 0.],
             [0., (2. / (tl_y - br_y))],
             [0., 0.],
@@ -637,88 +648,61 @@ impl StateMatrix {
                 -((br_x + tl_x) / (br_x - tl_x)),
                 -((tl_y + br_y) / (tl_y - br_y)),
             ],
-        ];
+        ]
+    }
+
+    pub fn new(device: &wgpu::Device) -> Self {
+        let buffer = CacheBuffer::new(
+            Some("State Matrices".into()),
+            wgpu::BufferUsages::UNIFORM,
+            device,
+        );
         Self {
             tl_x: 0.,
             tl_y: 0.,
-            br_x: 0.,
-            br_y: 0.,
-            buffer: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("State matrix"),
-                contents: bytemuck::cast_slice(&state_matrix),
-                usage: wgpu::BufferUsages::UNIFORM,
-            }),
+            br_x: 1.,
+            br_y: 1.,
+            last_offset: None,
+            buffer,
         }
     }
 
-    fn update_bind_group<'a>(
+    #[allow(clippy::too_many_arguments)]
+    fn get_bind_group_offset(
         &mut self,
         tl_x: f32,
         tl_y: f32,
         br_x: f32,
         br_y: f32,
-        bind_groups: &'a mut BindGroups,
-        device: &wgpu::Device,
-    ) -> &'a wgpu::BindGroup {
-        if self.tl_x == tl_x && self.tl_y == tl_y && self.br_x == br_x && self.br_y == br_y {
-            &bind_groups.last_state_matrix
-        } else {
-            *self = Self::new(tl_x, tl_y, br_x, br_y, device);
-            bind_groups.update_state_matrix(self, device);
-            &bind_groups.last_state_matrix
-        }
-    }
-}
-
-struct VertexBuffer {
-    cache: Vec<u8>,
-    buffer: wgpu::Buffer,
-}
-
-impl VertexBuffer {
-    fn new(device: &wgpu::Device) -> Self {
-        let cache = Vec::with_capacity(1024);
-        let buffer = Self::create_buffer(cache.capacity(), device);
-        Self { cache, buffer }
-    }
-
-    fn reserve_vertices(
-        &mut self,
-        vertex_data: &[u8],
+        bind_groups: &mut BindGroups,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-    ) -> BufferSlice {
-        if self.cache.capacity() - self.cache.len() >= vertex_data.len() {
-            // Enough space
-            let offset = self.cache.len();
-            let cap_before = self.cache.capacity();
-            self.cache.extend_from_slice(vertex_data);
-            assert_eq!(cap_before, self.cache.capacity());
-            self.buffer
-                .slice(offset as u64..(offset + vertex_data.len()) as u64)
-        } else {
-            queue.write_buffer(&self.buffer, 0, self.cache.as_slice());
-            let offset = self.cache.len();
-            self.cache.extend_from_slice(vertex_data);
-            let new_capacity = self.cache.capacity();
-            self.buffer = Self::create_buffer(new_capacity, device);
-            self.buffer
-                .slice(offset as u64..(offset + vertex_data.len()) as u64)
+    ) -> u64 {
+        if let Some(last_offset) = self.last_offset {
+            if self.tl_x == tl_x && self.tl_y == tl_y && self.br_x == br_x && self.br_y == br_y {
+                return last_offset;
+            }
         }
+        let offset =
+            match self
+                .buffer
+                .reserve(&[Self::matrix(tl_x, tl_y, br_x, br_y)], device, queue)
+            {
+                Ok((_, data_slice)) => data_slice.start,
+                Err((_, data_slice)) => {
+                    bind_groups.update_state_matrix(self, device);
+                    data_slice.start
+                }
+            };
+        // Buffer alignment to 256 :)
+        let _ = self.buffer.reserve(&[[[0.; 2]; 4]; 7], device, queue);
+        self.last_offset = Some(offset);
+        offset
     }
 
-    fn create_buffer(cap: usize, device: &wgpu::Device) -> wgpu::Buffer {
-        device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Vertex Buffer"),
-            size: cap as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        })
-    }
-
-    fn finalize_buffers(&mut self, queue: &wgpu::Queue) {
-        queue.write_buffer(&self.buffer, 0, self.cache.as_slice());
-        self.cache.clear();
+    pub fn upload_and_reset(&mut self, queue: &wgpu::Queue) {
+        self.buffer.upload_and_reset(queue);
+        self.last_offset = None;
     }
 }
 
@@ -755,5 +739,76 @@ impl IndexBuffer {
             contents: bytemuck::cast_slice(buffer.as_slice()),
             usage: wgpu::BufferUsages::INDEX,
         })
+    }
+}
+
+struct CacheBuffer<T: bytemuck::NoUninit> {
+    cache: Vec<u8>,
+    label: Option<String>,
+    usages: wgpu::BufferUsages,
+    buffer: wgpu::Buffer,
+    initialized_until: usize,
+    phantom: std::marker::PhantomData<T>,
+}
+
+impl<T: bytemuck::NoUninit> CacheBuffer<T> {
+    fn new(label: Option<String>, usages: wgpu::BufferUsages, device: &wgpu::Device) -> Self {
+        let cache = Vec::with_capacity(std::mem::size_of::<T>() * 8);
+        let buffer = Self::create_buffer(cache.capacity(), label.as_deref(), usages, device);
+        Self {
+            cache,
+            label,
+            usages,
+            buffer,
+            initialized_until: 0,
+            phantom: std::marker::PhantomData,
+        }
+    }
+
+    fn reserve(
+        &mut self,
+        data: &[T],
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> Result<(BufferSlice, Range<u64>), (BufferSlice, Range<u64>)> {
+        let data = bytemuck::cast_slice(data);
+        if self.cache.capacity() - self.cache.len() >= data.len() {
+            // Enough space
+            let offset = self.cache.len();
+            let cap_before = self.cache.capacity();
+            self.cache.extend_from_slice(data);
+            assert_eq!(cap_before, self.cache.capacity());
+            let data_range = offset as u64..(offset + data.len()) as u64;
+            Ok((self.buffer.slice(data_range.clone()), data_range))
+        } else {
+            queue.write_buffer(&self.buffer, 0, self.cache.as_slice());
+            let offset = self.cache.len();
+            self.cache.extend_from_slice(data);
+            let new_capacity = self.cache.capacity();
+            self.buffer =
+                Self::create_buffer(new_capacity, self.label.as_deref(), self.usages, device);
+            let data_range = offset as u64..(offset + data.len()) as u64;
+            Err((self.buffer.slice(data_range.clone()), data_range))
+        }
+    }
+
+    fn create_buffer(
+        cap: usize,
+        label: Option<&str>,
+        usages: wgpu::BufferUsages,
+        device: &wgpu::Device,
+    ) -> wgpu::Buffer {
+        device.create_buffer(&wgpu::BufferDescriptor {
+            label,
+            size: cap as u64,
+            usage: usages | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        })
+    }
+
+    fn upload_and_reset(&mut self, queue: &wgpu::Queue) {
+        queue.write_buffer(&self.buffer, 0, self.cache.as_slice());
+        self.initialized_until = self.cache.len();
+        self.cache.clear();
     }
 }
