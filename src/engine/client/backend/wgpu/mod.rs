@@ -18,7 +18,8 @@ mod ffi {
         fn BackendWgpuGreetings(names: &[StrRef<'_>]);
 
         type RustWgpuBackend<'a>;
-        fn init_rust_wgpu_backend() -> Box<RustWgpuBackend<'static>>;
+        unsafe fn request_wgpu_backend_type(backend_type: i32, name: *mut *const c_char) -> bool;
+        fn init_rust_wgpu_backend(backend_type: i32) -> Box<RustWgpuBackend<'static>>;
         unsafe fn init_window(&mut self, window: *mut u8, width: u32, height: u32);
         fn update_viewport(&mut self, x: i32, y: i32, w: u32, h: u32, by_resize: bool);
         fn swap(&mut self);
@@ -104,8 +105,63 @@ struct RustWgpuBackend<'a> {
     render_pass: Option<wgpu::RenderPass<'static>>,
 }
 
-fn init_rust_wgpu_backend() -> Box<RustWgpuBackend<'static>> {
-    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+#[repr(i32)]
+enum WgpuBackendType {
+    Vulkan,
+    Gl,
+    PlatformNative,
+}
+
+impl WgpuBackendType {
+    fn from_num(n: i32) -> Self {
+        match n {
+            0 => Self::Vulkan,
+            1 => Self::Gl,
+            2 => Self::PlatformNative,
+            _ => panic!("Unknown graphics driver age type"),
+        }
+    }
+
+    fn backends(self) -> wgpu::Backends {
+        match self {
+            Self::Vulkan => wgpu::Backends::VULKAN,
+            Self::Gl => wgpu::Backends::GL,
+            Self::PlatformNative => {
+                wgpu::Backends::DX12 | wgpu::Backends::METAL | wgpu::Backends::BROWSER_WEBGPU
+            }
+        }
+    }
+}
+
+unsafe fn request_wgpu_backend_type(backend_type: i32, name: *mut *const std::ffi::c_char) -> bool {
+    let backend_type = WgpuBackendType::from_num(backend_type);
+    let requested_backends = backend_type.backends();
+    let compile_time_enabled_backends = wgpu::Instance::enabled_backend_features();
+    let suitable_backend = requested_backends & compile_time_enabled_backends;
+    assert!(suitable_backend.iter().count() < 2);
+    let backends = &[
+        (b"WGPU (Vulkan)\0".as_slice(), wgpu::Backends::VULKAN),
+        (b"WGPU (WebGPU)\0", wgpu::Backends::BROWSER_WEBGPU),
+        (b"WGPU (GL)\0", wgpu::Backends::GL),
+        (b"WGPU (Metal)\0", wgpu::Backends::METAL),
+        (b"WGPU (DX12)\0", wgpu::Backends::DX12),
+    ];
+    for (ident, backend) in backends {
+        if suitable_backend.contains(*backend) {
+            let cstr = std::ffi::CStr::from_bytes_until_nul(ident).unwrap();
+            *name = cstr.as_ptr();
+            return true;
+        }
+    }
+    false
+}
+
+fn init_rust_wgpu_backend(backend_type: i32) -> Box<RustWgpuBackend<'static>> {
+    let backend_type = WgpuBackendType::from_num(backend_type);
+    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+        backends: backend_type.backends(),
+        ..Default::default()
+    });
     let adapter = instance
         .request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,

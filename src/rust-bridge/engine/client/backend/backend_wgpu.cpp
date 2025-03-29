@@ -625,7 +625,9 @@ void cxxbridge1$BackendWgpuGreetings(::rust::Slice<const ::StrRef> names) noexce
 ::std::size_t cxxbridge1$RustWgpuBackend$operator$sizeof() noexcept;
 ::std::size_t cxxbridge1$RustWgpuBackend$operator$alignof() noexcept;
 
-::RustWgpuBackend *cxxbridge1$init_rust_wgpu_backend() noexcept;
+bool cxxbridge1$request_wgpu_backend_type(::std::int32_t backend_type, const char * *name) noexcept;
+
+::RustWgpuBackend *cxxbridge1$init_rust_wgpu_backend(::std::int32_t backend_type) noexcept;
 
 void cxxbridge1$RustWgpuBackend$init_window(::RustWgpuBackend &self, ::std::uint8_t *window, ::std::uint32_t width, ::std::uint32_t height) noexcept;
 
@@ -656,8 +658,12 @@ void BackendWgpuGreetings(::rust::Slice<const ::StrRef> names) noexcept {
   return cxxbridge1$RustWgpuBackend$operator$alignof();
 }
 
-::rust::Box<::RustWgpuBackend> init_rust_wgpu_backend() noexcept {
-  return ::rust::Box<::RustWgpuBackend>::from_raw(cxxbridge1$init_rust_wgpu_backend());
+bool request_wgpu_backend_type(::std::int32_t backend_type, const char * *name) noexcept {
+  return cxxbridge1$request_wgpu_backend_type(backend_type, name);
+}
+
+::rust::Box<::RustWgpuBackend> init_rust_wgpu_backend(::std::int32_t backend_type) noexcept {
+  return ::rust::Box<::RustWgpuBackend>::from_raw(cxxbridge1$init_rust_wgpu_backend(backend_type));
 }
 
 void RustWgpuBackend::init_window(::std::uint8_t *window, ::std::uint32_t width, ::std::uint32_t height) noexcept {

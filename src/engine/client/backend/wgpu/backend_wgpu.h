@@ -1,3 +1,5 @@
+#include "base/system.h"
+
 #include <engine/client/backend/backend_base.h>
 #include <engine/client/backend/backend_wgpu.h>
 
@@ -5,6 +7,10 @@ class CCommandProcessorFragment_WGPU : public CCommandProcessorFragment_GLBase
 {
 	bool GetPresentedImageData(uint32_t &Width, uint32_t &Height, CImageInfo::EImageFormat &Format, std::vector<uint8_t> &vDstData) override { return false; }
 	ERunCommandReturnTypes RunCommand(const CCommandBuffer::SCommand *pBaseCommand) override;
+	RustWgpuBackend *Rust()
+	{
+		return &*(*m_Rust);
+	}
 	bool Cmd_PreInit(const SCommand_PreInit *pCommand);
 	bool Cmd_Init(const SCommand_Init *pCommand);
 	virtual void Cmd_UpdateViewport(const CCommandBuffer::SCommand_Update_Viewport *pCommand);
@@ -17,7 +23,14 @@ class CCommandProcessorFragment_WGPU : public CCommandProcessorFragment_GLBase
 	virtual void Cmd_Clear(const CCommandBuffer::SCommand_Clear *pCommand);
 	virtual void Cmd_Render(const CCommandBuffer::SCommand_Render *pCommand);
 
-	rust::Box<RustWgpuBackend> m_Rust = init_rust_wgpu_backend();
+	std::optional<rust::Box<RustWgpuBackend>> m_Rust;
+
+public:
+	CCommandProcessorFragment_WGPU(int WgpuBackendType)
+	{
+		m_Rust = init_rust_wgpu_backend(WgpuBackendType);
+		dbg_assert(Rust() != nullptr, "Silent WGPU backend initialization failure");
+	}
 };
 
-CCommandProcessorFragment_GLBase *CreateWGPUCommandProcessorFragment();
+CCommandProcessorFragment_GLBase *CreateWGPUCommandProcessorFragment(int WgpuBackendType);
