@@ -417,9 +417,17 @@ CCommandProcessor_SDL_GL::CCommandProcessor_SDL_GL(EBackendType BackendType, int
 		m_pGLBackend = CreateVulkanCommandProcessorFragment();
 #endif
 	}
-	else if(BackendType == BACKEND_TYPE_WGPU)
+	else if(BackendType == BACKEND_TYPE_WGPU_VULKAN)
 	{
-		m_pGLBackend = CreateWGPUCommandProcessorFragment();
+		m_pGLBackend = CreateWGPUCommandProcessorFragment(0);
+	}
+	else if(BackendType == BACKEND_TYPE_WGPU_GL)
+	{
+		m_pGLBackend = CreateWGPUCommandProcessorFragment(1);
+	}
+	else if(BackendType == BACKEND_TYPE_WGPU_PLATFORM_NATIVE)
+	{
+		m_pGLBackend = CreateWGPUCommandProcessorFragment(2);
 	}
 #endif
 }
@@ -709,8 +717,12 @@ EBackendType CGraphicsBackend_SDL_GL::DetectBackend()
 		RetBackendType = BACKEND_TYPE_VULKAN;
 	else if(pEnvDriver && str_comp_nocase(pEnvDriver, "OpenGL") == 0)
 		RetBackendType = BACKEND_TYPE_OPENGL;
-	else if(pEnvDriver && str_comp_nocase(pEnvDriver, "WGPU") == 0)
-		RetBackendType = BACKEND_TYPE_WGPU;
+	else if(pEnvDriver && str_comp_nocase(pEnvDriver, "WGPU/Vulkan") == 0)
+		RetBackendType = BACKEND_TYPE_WGPU_VULKAN;
+	else if(pEnvDriver && str_comp_nocase(pEnvDriver, "WGPU/Gl") == 0)
+		RetBackendType = BACKEND_TYPE_WGPU_GL;
+	else if(pEnvDriver && str_comp_nocase(pEnvDriver, "WGPU/PlatformNative") == 0)
+		RetBackendType = BACKEND_TYPE_WGPU_PLATFORM_NATIVE;
 	else if(pEnvDriver == nullptr)
 	{
 		// load the config backend
@@ -721,8 +733,12 @@ EBackendType CGraphicsBackend_SDL_GL::DetectBackend()
 			RetBackendType = BACKEND_TYPE_VULKAN;
 		else if(str_comp_nocase(pConfBackend, "OpenGL") == 0)
 			RetBackendType = BACKEND_TYPE_OPENGL;
-		else if(str_comp_nocase(pConfBackend, "WGPU") == 0)
-			RetBackendType = BACKEND_TYPE_WGPU;
+		else if(str_comp_nocase(pConfBackend, "WGPU/Vulkan") == 0)
+			RetBackendType = BACKEND_TYPE_WGPU_VULKAN;
+		else if(str_comp_nocase(pConfBackend, "WGPU/Gl") == 0)
+			RetBackendType = BACKEND_TYPE_WGPU_GL;
+		else if(str_comp_nocase(pConfBackend, "WGPU/PlatformNative") == 0)
+			RetBackendType = BACKEND_TYPE_WGPU_PLATFORM_NATIVE;
 	}
 #else
 	RetBackendType = BACKEND_TYPE_OPENGL;
@@ -790,7 +806,7 @@ void CGraphicsBackend_SDL_GL::ClampDriverVersion(EBackendType BackendType)
 		g_Config.m_GfxGLPatch = 0;
 #endif
 	}
-	else if(BackendType == BACKEND_TYPE_WGPU)
+	else if(BackendType == BACKEND_TYPE_WGPU_VULKAN || BackendType == BACKEND_TYPE_WGPU_GL || BackendType == BACKEND_TYPE_WGPU_PLATFORM_NATIVE)
 	{
 		g_Config.m_GfxGLMajor = 24;
 		g_Config.m_GfxGLMinor = 1;
@@ -903,15 +919,40 @@ bool CGraphicsBackend_SDL_GL::GetDriverVersion(EGraphicsDriverAgeType DriverAgeT
 		return false;
 #endif
 	}
-	else if(BackendType == BACKEND_TYPE_WGPU)
+	else if(BackendType == BACKEND_TYPE_WGPU_VULKAN)
 	{
-		pName = "WGPU";
+		pName = "WGPU/Vulkan";
+		const char *pWgpuBackendName = nullptr;
 		if(DriverAgeType == GRAPHICS_DRIVER_AGE_TYPE_DEFAULT)
 		{
 			Major = 24;
 			Minor = 1;
 			Patch = 0;
-			return true;
+			return request_wgpu_backend_type(0, &pWgpuBackendName);
+		}
+	}
+	else if(BackendType == BACKEND_TYPE_WGPU_GL)
+	{
+		pName = "WGPU/GL";
+		const char *pWgpuBackendName = nullptr;
+		if(DriverAgeType == GRAPHICS_DRIVER_AGE_TYPE_DEFAULT)
+		{
+			Major = 24;
+			Minor = 1;
+			Patch = 0;
+			return request_wgpu_backend_type(1, &pWgpuBackendName);
+		}
+	}
+	else if(BackendType == BACKEND_TYPE_WGPU_PLATFORM_NATIVE)
+	{
+		pName = "WGPU/PlatformNative";
+		const char *pWgpuBackendName = nullptr;
+		if(DriverAgeType == GRAPHICS_DRIVER_AGE_TYPE_DEFAULT)
+		{
+			Major = 24;
+			Minor = 1;
+			Patch = 0;
+			return request_wgpu_backend_type(2, &pWgpuBackendName);
 		}
 	}
 	return false;
@@ -1109,8 +1150,12 @@ int CGraphicsBackend_SDL_GL::Init(const char *pName, int *pScreen, int *pWidth, 
 	const char *BackendStr = "OpenGL";
 	if(m_BackendType == BACKEND_TYPE_VULKAN)
 		BackendStr = "Vulkan";
-	else if(m_BackendType == BACKEND_TYPE_WGPU)
-		BackendStr = "WGPU";
+	else if(m_BackendType == BACKEND_TYPE_WGPU_VULKAN)
+		BackendStr = "WGPU/Vulkan";
+	else if(m_BackendType == BACKEND_TYPE_WGPU_GL)
+		BackendStr = "WGPU/Gl";
+	else if(m_BackendType == BACKEND_TYPE_WGPU_PLATFORM_NATIVE)
+		BackendStr = "WGPU/PlatformNative";
 
 	dbg_msg("gfx", "Created %s %d.%d context.", BackendStr, g_Config.m_GfxGLMajor, g_Config.m_GfxGLMinor);
 
@@ -1186,7 +1231,9 @@ int CGraphicsBackend_SDL_GL::Init(const char *pName, int *pScreen, int *pWidth, 
 
 	// set flags
 	int SdlFlags = SDL_WINDOW_INPUT_GRABBED | SDL_WINDOW_INPUT_FOCUS | SDL_WINDOW_MOUSE_FOCUS;
-	SdlFlags |= (IsOpenGLFamilyBackend) ? SDL_WINDOW_OPENGL : SDL_WINDOW_VULKAN;
+	bool OpenGLWindow = IsOpenGLFamilyBackend || m_BackendType == BACKEND_TYPE_WGPU_GL;
+	printf("openglwindwo: %d\n", OpenGLWindow);
+	SdlFlags |= (OpenGLWindow) ? SDL_WINDOW_OPENGL : SDL_WINDOW_VULKAN;
 	if(Flags & IGraphicsBackend::INITFLAG_HIGHDPI)
 		SdlFlags |= SDL_WINDOW_ALLOW_HIGHDPI;
 	if(Flags & IGraphicsBackend::INITFLAG_RESIZABLE)

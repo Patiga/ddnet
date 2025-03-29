@@ -607,4 +607,6 @@ private:
 
 void BackendWgpuGreetings(::rust::Slice<::StrRef const> names) noexcept;
 
-::rust::Box<::RustWgpuBackend> init_rust_wgpu_backend() noexcept;
+bool request_wgpu_backend_type(::std::int32_t backend_type, char const **name) noexcept;
+
+::rust::Box<::RustWgpuBackend> init_rust_wgpu_backend(::std::int32_t backend_type) noexcept;
