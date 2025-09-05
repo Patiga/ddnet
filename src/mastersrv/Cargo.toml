@@ -12,12 +12,15 @@ license = "Zlib"
 arc-swap = "1.7.1"
 arrayvec = { version = "0.5.2", features = ["serde"] }
 base64 = "0.13.0"
+boring = "4"
+boring-sys = "4"
 bytes = "1.1.0"
 clap = { version = "2.34.0", default-features = false, features = [
   "suggestions",
   "wrap_help",
 ] }
 env_logger = "0.8.3"
+foreign-types-shared = "0.3.1"
 headers = "0.3.7"
 hex = "0.4.3"
 ipnet = "2.9.0"

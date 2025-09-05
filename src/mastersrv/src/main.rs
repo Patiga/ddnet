@@ -22,7 +22,6 @@ use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fmt;
-use std::fs::read_to_string;
 use std::io;
 use std::io::Write;
 use std::mem;
@@ -60,13 +59,13 @@ use crate::locations::Locations;
 // (e.g. serialized) identifiers.
 mod addr;
 mod config;
+mod key;
 mod locations;
 
 const SERVER_TIMEOUT_SECONDS: u64 = 30;
 
 type ShortString = ArrayString<[u8; 64]>;
 
-#[derive(Debug, Deserialize)]
 struct Register {
     address: RegisterAddr,
     secret: ShortString,
@@ -75,6 +74,10 @@ struct Register {
     challenge_token: Option<ShortString>,
     info_serial: i64,
     info: Option<json::Value>,
+    /// QUIC-only, used to verify the connection-test.
+    server_public_key: Option<key::Identity>,
+    /// QUIC-only, used to establish the connection-test.
+    challenge_private_key: Option<key::PrivateIdentity>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -320,8 +323,6 @@ struct Shared<'a> {
     servers: &'a Mutex<Servers>,
     socket: &'a Arc<tokio::net::UdpSocket>,
     timekeeper: Timekeeper,
-    quic_cert: Option<Arc<CertificateDer<'static>>>,
-    quic_privkey: Option<Arc<PrivateKeyDer<'static>>>,
 }
 
 impl<'a> Shared<'a> {
@@ -725,31 +726,106 @@ async fn send_challenge_quic(
     target: SocketAddr,
     challenge_secret: ShortString,
     challenge: ShortString,
-    quic_cert: CertificateDer<'static>,
-    quic_privkey: PrivateKeyDer<'static>,
+    challenge_priv: key::PrivateIdentity,
+    server_pub: key::Identity,
 ) {
+    #[derive(Debug)]
+    struct VerifyQuicServer {
+        expected_srv_identity: key::Identity,
+        algos: rustls::crypto::WebPkiSupportedAlgorithms,
+    }
+    impl rustls::client::danger::ServerCertVerifier for VerifyQuicServer {
+        fn verify_server_cert(
+            &self,
+            end_entity: &CertificateDer<'_>,
+            _intermediates: &[CertificateDer<'_>],
+            _server_name: &rustls::pki_types::ServerName<'_>,
+            _ocsp_response: &[u8],
+            _now: rustls::pki_types::UnixTime,
+        ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+            let err = |s: &str| {
+                let error: Box<dyn std::error::Error + Send + Sync> = s.into();
+                rustls::Error::Other(rustls::OtherError(error.into()))
+            };
+
+            let cert = boring::x509::X509::from_der(end_entity)
+                .map_err(|_| err("Cannot parse certificate"))?;
+            let public = cert
+                .public_key()
+                .map_err(|_| err("Can't get pub key from cert"))?;
+            let identity = key::Identity::try_from_lib(&public)
+                .ok_or_else(|| err("Can't get identity from pub key"))?;
+            if identity != self.expected_srv_identity {
+                println!("Expected {identity}, found: {}", self.expected_srv_identity);
+                return Err(err("Quic Identity verification failed"));
+            }
+            Ok(rustls::client::danger::ServerCertVerified::assertion())
+        }
+
+        fn verify_tls12_signature(
+            &self,
+            message: &[u8],
+            cert: &CertificateDer<'_>,
+            dss: &rustls::DigitallySignedStruct,
+        ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+            rustls::crypto::verify_tls12_signature(message, cert, dss, &self.algos)
+        }
+
+        fn verify_tls13_signature(
+            &self,
+            message: &[u8],
+            cert: &CertificateDer<'_>,
+            dss: &rustls::DigitallySignedStruct,
+        ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+            rustls::crypto::verify_tls13_signature(message, cert, dss, &self.algos)
+        }
+
+        fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+            use rustls::SignatureScheme;
+            vec![SignatureScheme::ED25519]
+        }
+    }
+    let identity_verifier = VerifyQuicServer {
+        expected_srv_identity: server_pub,
+        algos: rustls::crypto::aws_lc_rs::default_provider().signature_verification_algorithms,
+    };
+    let cert_der = challenge_priv.generate_certificate().to_der().unwrap();
+
+    let private_der = challenge_priv.as_lib().private_key_to_pem_pkcs8().unwrap();
+    //let cert_raw = challenge_priv.generate_certificate().to_pem().unwrap();
+    let private_der = PrivateKeyDer::from_pem_slice(&private_der).unwrap();
+    let cert_der = CertificateDer::from(cert_der);
     let mut client_crypto = rustls::ClientConfig::builder()
         .with_root_certificates(RootCertStore::empty())
-        .with_client_auth_cert(vec![quic_cert], quic_privkey)
+        .with_client_auth_cert(vec![cert_der], private_der)
         .unwrap();
-    client_crypto.alpn_protocols.push(b"ddnet-15".to_vec());
+    client_crypto.alpn_protocols.push(b"ddnet-15".into());
+    rustls::client::danger::DangerousClientConfig {
+        cfg: &mut client_crypto,
+    }
+    .set_certificate_verifier(Arc::new(identity_verifier));
 
-    let client_config =
+    let mut client_config =
         quinn::ClientConfig::new(Arc::new(QuicClientConfig::try_from(client_crypto).unwrap()));
+    let mut transport_cfg = quinn::TransportConfig::default();
+    transport_cfg.initial_mtu(4048);
+    transport_cfg.datagram_receive_buffer_size(Some(4000));
+    transport_cfg.min_mtu(4048);
+    client_config.transport_config(Arc::new(transport_cfg));
     let mut endpoint = quinn::Endpoint::client(SocketAddr::new([0, 0, 0, 0].into(), 0)).unwrap();
     endpoint.set_default_client_config(client_config);
-    let conn = endpoint.connect(target, "").unwrap().await.unwrap();
-    let mut send = conn.open_uni().await.unwrap();
-
-    {
-        let mut packet = Vec::with_capacity(128);
-        packet.extend_from_slice(b"\xff\xff\xff\xff\xff\xff\xff\xff\xff\xffchal");
-        packet.extend_from_slice(challenge_secret.as_bytes());
-        packet.push(0);
-        packet.extend_from_slice(challenge.as_bytes());
-        packet.push(0);
-        send.write_all(&packet).await.unwrap();
-    }
+    let conn = match endpoint.connect(target, "srv").unwrap().await {
+        Ok(conn) => conn,
+        Err(err) => panic!("{err}"),
+    };
+    let mut packet = Vec::with_capacity(128);
+    packet.extend_from_slice(b"\xff\xff\xff\xff\xff\xff\xff\xff\xff\xffchal");
+    packet.extend_from_slice(challenge_secret.as_bytes());
+    packet.push(0);
+    packet.extend_from_slice(challenge.as_bytes());
+    packet.push(0);
+    conn.send_datagram(packet.into()).unwrap();
+    println!("Challenge sent (?)");
 }
 
 fn handle_register(
@@ -845,13 +921,15 @@ fn handle_register(
             trace!("sending challenge to {}", addr);
         }
         if matches!(register.address.protocol, Protocol::V6Quic) {
-            if let (Some(cert), Some(privkey)) = (&shared.quic_cert, &shared.quic_privkey) {
+            if let (Some(master_priv), Some(server_pub)) =
+                (register.challenge_private_key, register.server_public_key)
+            {
                 tokio::spawn(send_challenge_quic(
                     addr.to_socket_addr(),
                     register.challenge_secret,
                     challenge.current,
-                    (**cert).clone(),
-                    privkey.clone_key(),
+                    master_priv,
+                    server_pub,
                 ));
             } else {
                 warn!("quic register attempted but no certificates to send challenge provided.");
@@ -935,6 +1013,8 @@ fn register_from_headers(
         } else {
             None
         },
+        server_public_key: parse_opt(headers, "Server-Public-Key")?,
+        challenge_private_key: parse_opt(headers, "Challenge-Private-Key")?,
     })
 }
 
@@ -1060,13 +1140,6 @@ async fn main() {
 
     let matches = command.get_matches();
 
-    let quic_cert = matches.value_of("quic-cert").map(|path| {
-        Arc::new(CertificateDer::from_pem_slice(read_to_string(path).unwrap().as_bytes()).unwrap())
-    });
-    let quic_privkey = matches.value_of("quic-privkey").map(|path| {
-        Arc::new(PrivateKeyDer::from_pem_slice(read_to_string(path).unwrap().as_bytes()).unwrap())
-    });
-
     let listen_address = value_t_or_exit!(matches.value_of("listen"), SocketAddr);
     let connecting_ip_header = matches
         .value_of("connecting-ip-header")
@@ -1086,6 +1159,9 @@ async fn main() {
         (Some(_), Some(_)) => unreachable!(),
     };
     let config = Arc::new(ArcSwap::from_pointee(config_location.read().unwrap()));
+    rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .unwrap();
     let timekeeper = Timekeeper::new();
     let challenger = Arc::new(Mutex::new(Challenger::new()));
     let mut servers = Servers::new();
@@ -1176,8 +1252,6 @@ async fn main() {
                         servers: &servers,
                         socket: &socket.0,
                         timekeeper,
-                        quic_privkey: quic_privkey.clone(),
-                        quic_cert: quic_cert.clone(),
                     };
                     let addr = connecting_addr(addr, &headers)?;
                     match headers.get("Action").map(warp::http::HeaderValue::as_bytes) {

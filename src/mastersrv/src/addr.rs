@@ -57,7 +57,7 @@ impl FromStr for Protocol {
             "tw-0.6+udp" => V6,
             "tw-0.7+udp" => V7,
             "ddper-0.6+udp" => Ddper6,
-            "tw-0.6+quic" => V6Quic,
+            "ddnet-18+quic" => V6Quic,
             _ => return Err(UnknownProtocol),
         })
     }
