@@ -312,6 +312,7 @@ void CRegister::CProtocol::SendRegister()
 	if(m_Protocol == PROTOCOL_DDNET18_IPV6 || m_Protocol == PROTOCOL_DDNET18_IPV4)
 	{
 		pRegister->HeaderString("Challenge-Private-Key", "fca628e59382f4aebc1450273cf73682f8a3544e8eabd2c0e4e3686a0db771f4");
+		pRegister->HeaderString("Server-Public-Key", "0026a0d653cd5f38d1002bf166167933f2f7910f26d6dd619b2b3fe769e057ee");
 	}
 	if(m_Protocol == PROTOCOL_TW7_IPV6 || m_Protocol == PROTOCOL_TW7_IPV4)
 	{
