@@ -691,6 +691,8 @@ impl Net {
                         }
                         ConnectionEvent::ConnlessChunk(peer_addr, size) => return Ok(Some(Event::ConnlessChunk(peer_addr, size))),
                         ConnectionEvent::Disconnect(reason_size, remote) => {
+                            let reason = std::str::from_utf8(&buf[..reason_size]).unwrap();
+                            println!("Reason: {reason}");
                             assert!(peer.high_level); // TODO: make sure that `Disconnect` cannot be emitted before `Connect`. this currently isn't the case when manually disconnecting before a `Connect` event
                             peer.high_level = false;
                             for &addr in &peer.addrs {

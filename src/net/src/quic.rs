@@ -706,13 +706,16 @@ impl Connection {
         let mut reason = str::from_utf8(&err.reason)
             .ok()
             .unwrap_or("(invalid utf-8)");
+        println!("Reason: {reason}");
         if reason.bytes().any(|b| b < 32) {
             reason = "(reason containing control characters)";
         }
         let len;
+        println!("Error code: {}", err.error_code);
         if err.error_code == QUIC_CLOSE_CODE {
             len = cmp::min(buf.len(), reason.len());
             buf[..len].copy_from_slice(&reason.as_bytes()[..len]);
+            println!("QUICK_CLOSE_CODE");
         } else {
             let mut remaining = &mut buf[..];
             let kind = if err.is_app { "app, " } else { "" };
